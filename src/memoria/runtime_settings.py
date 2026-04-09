@@ -2,6 +2,10 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass
+from pathlib import Path
+
+from dotenv import find_dotenv
+from dotenv import load_dotenv
 
 
 @dataclass(frozen=True, slots=True)
@@ -23,6 +27,7 @@ class RuntimeSettings:
 
 
 def load_runtime_settings_from_env() -> RuntimeSettings:
+    _load_dotenv_from_cwd()
     return RuntimeSettings(
         ocr_engine=os.getenv("MEMORIA_OCR_ENGINE", "paddleocr"),
         ocr_language_hint=_env_or_none("MEMORIA_OCR_LANGUAGE_HINT"),
@@ -39,6 +44,12 @@ def load_runtime_settings_from_env() -> RuntimeSettings:
         ollama_keep_alive=os.getenv("MEMORIA_OLLAMA_KEEP_ALIVE", "5m"),
         ollama_think=os.getenv("MEMORIA_OLLAMA_THINK", "false"),
     )
+
+
+def _load_dotenv_from_cwd() -> None:
+    dotenv_path = find_dotenv(filename=".env", usecwd=True)
+    if dotenv_path:
+        load_dotenv(dotenv_path=Path(dotenv_path), override=False)
 
 
 def _env_or_none(name: str) -> str | None:
