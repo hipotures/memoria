@@ -3,5 +3,13 @@
 .pytest_cache/
 __pycache__/
 *.pyc
+
+# Local runtime state
 data/
-data/*.db*
+var/
+
+# Local SQLite files
+*.db
+*.db-*
+*.sqlite
+*.sqlite*
