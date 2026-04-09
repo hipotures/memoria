@@ -48,14 +48,15 @@ from memoria.vision.service import execute_vision_stage
 
 def create_app(
     *,
-    database_url: str,
+    database_url: str | None = None,
     blob_dir: Path,
     runtime_settings: RuntimeSettings | None = None,
     ocr_engine: OcrEngine | None = None,
     vision_engine: VisionEngine | None = None,
 ) -> FastAPI:
-    engine = create_engine_with_sqlite_pragmas(database_url)
     settings = runtime_settings or load_runtime_settings_from_env()
+    resolved_database_url = database_url or settings.database_url
+    engine = create_engine_with_sqlite_pragmas(resolved_database_url)
     resolved_ocr_engine = ocr_engine or _create_ocr_engine(settings)
     resolved_vision_engine = vision_engine or _create_vision_engine(settings)
     app = FastAPI()

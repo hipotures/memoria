@@ -75,6 +75,45 @@ def test_api_can_ingest_and_answer_status_question(tmp_path):
     assert pipeline_run.finished_at is not None
 
 
+def test_api_can_use_database_url_from_runtime_settings_when_not_passed_explicitly(tmp_path):
+    from fastapi.testclient import TestClient
+
+    try:
+        from memoria.api.app import create_app
+    except ImportError as exc:
+        pytest.fail(f"api app not implemented yet: {exc}")
+
+    database_path = tmp_path / "api-from-settings.db"
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+
+    from memoria.runtime_settings import RuntimeSettings
+
+    app = create_app(
+        blob_dir=tmp_path / "blobs",
+        runtime_settings=RuntimeSettings(
+            database_url=f"sqlite:///{database_path}",
+        ),
+        ocr_engine=_FakeOcrEngine(),
+        vision_engine=_FakeVisionEngine(),
+    )
+    client = TestClient(app)
+
+    ingest_response = client.post(
+        "/ingest",
+        json={
+            "filename": "capture-02.png",
+            "media_type": "image/png",
+            "connector_instance_id": "manual-upload",
+            "content_base64": b64encode(b"fake screenshot bytes").decode("ascii"),
+            "ocr_text": "Alice: book train tickets for Berlin",
+        },
+    )
+
+    assert ingest_response.status_code == 201
+
+
 def test_api_duplicate_ingest_with_same_bytes_stays_idempotent(tmp_path):
     client, engine = _create_test_client(tmp_path)
     duplicate_bytes = b"same screenshot bytes"

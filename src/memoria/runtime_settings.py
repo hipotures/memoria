@@ -10,6 +10,7 @@ from dotenv import load_dotenv
 
 @dataclass(frozen=True, slots=True)
 class RuntimeSettings:
+    database_url: str = ""
     ocr_engine: str = "paddleocr"
     ocr_language_hint: str | None = None
     paddle_lang: str = "en"
@@ -29,6 +30,7 @@ class RuntimeSettings:
 def load_runtime_settings_from_env() -> RuntimeSettings:
     _load_dotenv_from_cwd()
     return RuntimeSettings(
+        database_url=os.getenv("MEMORIA_DATABASE_URL", _default_database_url()),
         ocr_engine=os.getenv("MEMORIA_OCR_ENGINE", "paddleocr"),
         ocr_language_hint=_env_or_none("MEMORIA_OCR_LANGUAGE_HINT"),
         paddle_lang=os.getenv("MEMORIA_PADDLE_LANG", "en"),
@@ -50,6 +52,10 @@ def _load_dotenv_from_cwd() -> None:
     dotenv_path = find_dotenv(filename=".env", usecwd=True)
     if dotenv_path:
         load_dotenv(dotenv_path=Path(dotenv_path), override=False)
+
+
+def _default_database_url() -> str:
+    return f"sqlite:///{Path.cwd() / 'data' / 'memoria.db'}"
 
 
 def _env_or_none(name: str) -> str | None:
