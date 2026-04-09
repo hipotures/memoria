@@ -328,10 +328,17 @@ Examples:
 
 Claims in V1 must have:
 
+- `claim_type`
+- `subject_ref`
+- `predicate`
+- `object_ref_or_value`
+- `asserted_at`
+- `observed_at`
 - `status`
 - `confidence_score`
 - `first_seen_at`
 - `last_confirmed_at`
+- `evidence_set_id`
 
 V1 statuses:
 
@@ -339,6 +346,23 @@ V1 statuses:
 - `uncertain`
 
 More advanced lifecycle states such as `stale` and `superseded` are intentionally deferred.
+
+The minimum semantic model is:
+
+- `claim_type`: the structural kind of the claim, such as `membership`, `state`, `task_status`, or `person_hint`
+- `subject_ref`: the knowledge object the claim is about
+- `predicate`: the typed relationship or state label
+- `object_ref_or_value`: either another object reference or a scalar value
+- `observed_at`: when the underlying screenshot evidence appears to belong in the world
+- `asserted_at`: when the system wrote or refreshed the claim
+
+This prevents claims from collapsing into free-form text with a confidence score attached.
+
+Examples:
+
+- `claim_type=membership`, `subject_ref=thread:alice-berlin-chat`, `predicate=belongs_to_topic`, `object_ref_or_value=topic:trip-to-berlin`
+- `claim_type=task_status`, `subject_ref=task:book-train`, `predicate=status`, `object_ref_or_value=open`
+- `claim_type=person_hint`, `subject_ref=thread:alice-berlin-chat`, `predicate=involves_person`, `object_ref_or_value=person:alice`
 
 ### 9.3 Evidence links
 
@@ -352,6 +376,22 @@ Evidence links connect claims to:
 - optional screenshot region or note later
 
 Without evidence links, the assistant cannot justify its answers and the design fails its primary goal.
+
+### 9.4 Knowledge objects versus claims
+
+V1 must keep this distinction explicit:
+
+- a `knowledge_object` is a durable node the system can return to later
+- a `knowledge_claim` is a typed statement about one or more knowledge objects
+- a `projection` is a read model generated from knowledge objects and claims
+
+Examples:
+
+- `topic:trip-to-berlin` is a knowledge object
+- "there is an open task to book train tickets" is a claim
+- the compact summary shown to the assistant for this topic is a projection
+
+This separation is necessary to keep absorb, retrieval, and projection refresh predictable.
 
 ---
 
@@ -438,24 +478,82 @@ Its job is to transform interpretation signals into durable knowledge updates.
 
 Absorb should be treated as a deterministic mapping layer over interpretation outputs.
 
-### 11.1 Absorb responsibilities
+### 11.1 Absorb input contract
+
+Absorb receives one interpreted screenshot packet consisting of:
+
+- `source_item`
+- source-specific screenshot payload
+- required extracted fragments
+- classification result
+- semantic screenshot description or OCR grounding
+- optional entity/topic/task candidates
+- stage metadata and run identity
+
+Absorb does not read arbitrary external state. It reads:
+
+- the interpreted screenshot packet,
+- currently matching knowledge objects,
+- currently matching claims,
+- current evidence links for those claims.
+
+### 11.2 Absorb decision types
+
+For each interpreted screenshot, absorb may emit only these decision types:
+
+- `create_object`
+- `update_object`
+- `create_claim`
+- `refresh_claim`
+- `mark_claim_uncertain`
+- `attach_evidence`
+- `refresh_projection`
+
+This is the minimum operational contract needed to make absorb testable and replayable.
+
+### 11.3 Absorb responsibilities
 
 - identify candidate `thread`, `topic`, `task`, and `person` objects
 - create new objects if matching is not strong enough
 - update existing objects when the match is strong enough
-- write or refresh claims
+- create new claims when the screenshot introduces new state
+- refresh existing claims when the screenshot reinforces current understanding
 - attach evidence links
 - trigger projection refresh for touched objects
 
-### 11.2 Matching rules in V1
+### 11.4 Object creation and update rules
+
+V1 should use simple rules:
+
+- create a new object when there is no sufficiently strong match
+- update an existing object when a match is strong enough and the screenshot reinforces the same semantic target
+- avoid creating more than one new `topic` or `thread` from one screenshot unless the interpretation explicitly separates them
+- create a new `task` only when the screenshot contains a distinct actionable follow-up rather than just more context about an existing task
+
+### 11.5 Claim creation and refresh rules
+
+- create a new claim when the screenshot introduces a new typed statement not currently represented
+- refresh a claim when the screenshot supports the same `subject_ref + predicate + object_ref_or_value`
+- mark a claim `uncertain` when new evidence weakens confidence but V1 cannot safely supersede it yet
+- never refresh a claim without attaching new evidence or confirming existing evidence
+
+### 11.6 Idempotency and replay
 
 V1 should be conservative.
 
-- High-confidence thread/topic/task matches may update existing objects automatically.
-- Person resolution should be minimal and cautious.
-- Ambiguous identity merging should not be solved aggressively in the screenshot slice.
+- absorb must be idempotent for the same interpreted screenshot packet
+- replaying absorb for the same packet must not create duplicate objects or duplicate claims
+- the idempotency boundary should be tied to the effective interpreted packet, not just the raw blob
+- projection refresh must also be replayable and safe to rerun after partial failure
 
-### 11.3 Example
+### 11.7 Matching rules in V1
+
+- high-confidence thread/topic/task matches may update existing objects automatically
+- person resolution should be minimal and cautious
+- ambiguous identity merging should not be solved aggressively in the screenshot slice
+- if matching confidence is below threshold, prefer a new object or an `uncertain` claim over an aggressive merge
+
+### 11.8 Example
 
 If a screenshot contains a Telegram conversation about a Berlin trip:
 
@@ -478,11 +576,14 @@ The projection layer exists so the assistant does not have to rediscover state f
 V1 should support:
 
 - `assistant_context_projection`
-- `thread_summary_projection`
 - `topic_status_projection`
-- `daily_digest_projection`
 
 These projections may be persisted or generated on demand, but architecturally they are read-models, not truth stores.
+
+The following projections are explicitly deferred past V1:
+
+- `thread_summary_projection`
+- `daily_digest_projection`
 
 ### 12.2 Why projections exist
 
@@ -529,6 +630,13 @@ V1 should support at least:
 6. Return an answer in natural language.
 7. Show evidence on demand.
 
+In V1, "knowledge first" means:
+
+- read `assistant_context_projection` when available
+- read `topic_status_projection` for matching topics
+- read active and uncertain claims for the matched objects
+- only then expand into canonical fragments and raw screenshots
+
 ### 13.3 Example question
 
 For a question such as:
@@ -546,6 +654,30 @@ The system should:
   - open tasks,
   - unresolved points,
   - evidence references.
+
+### 13.4 Freshness and time semantics
+
+V1 must distinguish at least four timestamps:
+
+- `source_created_at`: when the screenshot file was created by the source system if known
+- `source_observed_at`: when the connector observed or imported the screenshot
+- `observed_at` on the claim: when the screenshot evidence appears to describe the world
+- `asserted_at` on the claim: when the system wrote or refreshed the claim
+
+For assistant answers:
+
+- "current" means supported by the newest active claims available for the object
+- "recent" or "lately" means weighted toward the most recently observed supporting evidence
+- if the newest evidence is too old or contradictory, the assistant should say so explicitly instead of presenting a confident current-state answer
+
+### 13.5 Minimal conflict policy
+
+V1 does not implement full supersession, but it does require a minimum conflict policy:
+
+- if a new screenshot supports the same claim shape, refresh the existing claim
+- if a new screenshot weakens or conflicts with the current claim, lower confidence and mark the claim `uncertain`
+- if two screenshots imply different task states, the assistant should surface the conflict as uncertainty rather than silently picking one
+- conflict resolution beyond this minimum is deferred, but conflict visibility is not
 
 ---
 
@@ -593,6 +725,17 @@ Soft failure reduces quality but not baseline usefulness:
 
 Soft failures should be visible in pipeline status and replayable.
 
+### 15.3 Operational constraints for V1
+
+Even in V1, the implementation must preserve a few non-functional guarantees:
+
+- ingest must be idempotent for the same screenshot input
+- dedup must prevent duplicate canonical source records for the same screenshot blob unless explicitly re-imported under a new source identity
+- every absorb write must remain traceable to a pipeline run and source item
+- sensitive screenshot content must remain eligible for later redaction or masking, even if full privacy policy is deferred
+- assistant queries should target interactive latency for small local datasets rather than batch-style offline response times
+- costly interpretation stages should remain profile-driven so they can be tuned without rewriting the connector
+
 ---
 
 ## 16. Acceptance Tests
@@ -607,6 +750,7 @@ The slice should include acceptance scenarios proving end-to-end value.
 4. Ask a recall question such as whether there is an unresolved follow-up.
 5. Drill down from answer to supporting screenshots and OCR.
 6. Confirm that optional-stage failure does not destroy the assistant baseline.
+7. Confirm that when screenshots conflict, the assistant surfaces uncertainty rather than silently flattening the disagreement.
 
 ### 16.2 Definition of done
 
@@ -657,11 +801,11 @@ If this design fails, the failure will be architectural and observable early, wh
 
 These are valid implementation questions, but they do not block the design itself:
 
-1. Exact schema shape of `knowledge_object` versus `knowledge_claim`
+1. Exact persistence format for interpreted screenshot packets
 2. Exact storage format for persisted projections
 3. Exact confidence scoring formula in V1
-4. Exact replay and retry semantics for absorb and projection refresh
-5. Exact assistant API surface
+4. Exact replay and retry mechanics for absorb and projection refresh
+5. Exact assistant API surface and response envelope
 
 These belong in the implementation plan, not in the architectural decision for the slice.
 
