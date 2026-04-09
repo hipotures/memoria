@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
 from datetime import UTC
 from datetime import datetime
@@ -17,6 +18,22 @@ from memoria.domain.models import PipelineRun
 from memoria.domain.models import SourceItem
 from memoria.domain.models import StageResult
 from memoria.pipeline import record_stage_result
+
+_OPEN_TASK_STATUS_PATTERNS = (
+    re.compile(r"\bnot\s+done\b"),
+    re.compile(r"\bnot\s+completed\b"),
+    re.compile(r"\bnot\s+shipped\b"),
+    re.compile(r"\bunfinished\b"),
+    re.compile(r"\bunshipped\b"),
+    re.compile(r"\bstill\s+open\b"),
+    re.compile(r"\bpending\b"),
+    re.compile(r"\bnot\s+ready\b"),
+)
+_DONE_TASK_STATUS_PATTERNS = (
+    re.compile(r"\bdone\b"),
+    re.compile(r"\bcompleted\b"),
+    re.compile(r"\bshipped\b"),
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -413,10 +430,23 @@ def _attach_evidence_once(
 
 
 def _infer_task_status(semantic_summary: str) -> str:
-    lowered_summary = semantic_summary.lower()
-    if any(token in lowered_summary for token in (" done", "done.", "completed", "shipped")):
+    normalized_summary = _normalize_summary_for_task_status(semantic_summary)
+    if any(pattern.search(normalized_summary) for pattern in _OPEN_TASK_STATUS_PATTERNS):
+        return "open"
+    if any(pattern.search(normalized_summary) for pattern in _DONE_TASK_STATUS_PATTERNS):
         return "done"
     return "open"
+
+
+def _normalize_summary_for_task_status(semantic_summary: str) -> str:
+    normalized_summary = semantic_summary.lower()
+    normalized_summary = normalized_summary.replace("isn't", "is not")
+    normalized_summary = normalized_summary.replace("isnt", "is not")
+    normalized_summary = normalized_summary.replace("wasn't", "was not")
+    normalized_summary = normalized_summary.replace("wasnt", "was not")
+    normalized_summary = normalized_summary.replace("aren't", "are not")
+    normalized_summary = normalized_summary.replace("arent", "are not")
+    return normalized_summary
 
 
 def _utc_now() -> datetime:

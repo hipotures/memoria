@@ -7,6 +7,7 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi import HTTPException
+from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from memoria.api.schemas import AssistantQueryRequest
@@ -14,11 +15,14 @@ from memoria.api.schemas import IngestScreenshotRequest
 from memoria.assistant.service import answer_question
 from memoria.domain.models import AssetInterpretation
 from memoria.domain.models import AssetOcrText
+from memoria.domain.models import PipelineRun
+from memoria.domain.models import StageResult
 from memoria.ingest.service import IngestScreenshotCommand
 from memoria.ingest.service import ingest_screenshot
 from memoria.knowledge.service import absorb_interpreted_screenshot
 from memoria.ocr.service import RunOcrStageCommand
 from memoria.ocr.service import run_ocr_stage
+from memoria.pipeline import mark_pipeline_run_completed
 from memoria.projections.service import refresh_assistant_context_projection
 from memoria.projections.service import refresh_topic_status_projection
 from memoria.storage.metadata_db import create_engine_with_sqlite_pragmas
@@ -67,6 +71,8 @@ def create_app(*, database_url: str, blob_dir: Path) -> FastAPI:
                     blob_dir=blob_dir,
                 ),
             )
+            pipeline_run = session.get(PipelineRun, ingest_result.pipeline_run_id)
+            assert pipeline_run is not None
 
             if payload.ocr_text and not _has_existing_stub_derivatives(
                 session,
@@ -100,6 +106,13 @@ def create_app(*, database_url: str, blob_dir: Path) -> FastAPI:
                         refresh_assistant_context_projection(session, object_ref=object_ref)
                         if object_ref.startswith("topic:"):
                             refresh_topic_status_projection(session, object_ref=object_ref)
+                    if pipeline_run.status != "completed":
+                        mark_pipeline_run_completed(session, pipeline_run)
+            elif _has_completed_absorb_stage(
+                session,
+                pipeline_run_id=ingest_result.pipeline_run_id,
+            ) and pipeline_run.status != "completed":
+                mark_pipeline_run_completed(session, pipeline_run)
 
             session.commit()
             return {"source_item_id": ingest_result.source_item_id}
@@ -202,6 +215,19 @@ def _has_existing_stub_derivatives(session: Session, *, source_item_id: int) -> 
         session.get(AssetOcrText, source_item_id) is not None
         or session.get(AssetInterpretation, source_item_id) is not None
     )
+
+
+def _has_completed_absorb_stage(session: Session, *, pipeline_run_id: int) -> bool:
+    stage_result = session.scalar(
+        select(StageResult)
+        .where(
+            StageResult.pipeline_run_id == pipeline_run_id,
+            StageResult.stage_name == "absorb",
+            StageResult.status == "completed",
+        )
+        .order_by(StageResult.attempt.desc())
+    )
+    return stage_result is not None
 
 
 def _is_plausible_trip_location(location_title: str) -> bool:

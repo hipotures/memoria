@@ -56,9 +56,20 @@ def test_api_can_ingest_and_answer_status_question(tmp_path):
     assert "Berlin" in payload["answer_text"]
     assert payload["evidence"]
 
+    with Session(_create_engine_for_existing_db(tmp_path, "api.db")) as session:
+        pipeline_run = session.scalar(
+            select(PipelineRun)
+            .where(PipelineRun.source_item_id == ingest_response.json()["source_item_id"])
+            .order_by(PipelineRun.id.desc())
+        )
+
+    assert pipeline_run is not None
+    assert pipeline_run.status == "completed"
+    assert pipeline_run.finished_at is not None
+
 
 def test_api_duplicate_ingest_with_same_bytes_stays_idempotent(tmp_path):
-    client, _ = _create_test_client(tmp_path)
+    client, engine = _create_test_client(tmp_path)
     duplicate_bytes = b"same screenshot bytes"
 
     first_ingest_response = client.post(
@@ -88,6 +99,17 @@ def test_api_duplicate_ingest_with_same_bytes_stays_idempotent(tmp_path):
     assert second_ingest_response.status_code == 201
     assert second_ingest_response.json()["source_item_id"] == first_ingest_response.json()["source_item_id"]
 
+    with Session(engine) as session:
+        pipeline_runs = session.scalars(
+            select(PipelineRun)
+            .where(PipelineRun.source_item_id == first_ingest_response.json()["source_item_id"])
+            .order_by(PipelineRun.id.asc())
+        ).all()
+
+    assert len(pipeline_runs) == 1
+    assert pipeline_runs[0].status == "completed"
+    assert pipeline_runs[0].finished_at is not None
+
     berlin_response = client.post(
         "/assistant/query",
         json={"question": "What is going on lately with the Berlin trip?"},
@@ -112,6 +134,33 @@ def test_api_duplicate_ingest_with_same_bytes_stays_idempotent(tmp_path):
     assert finance_payload["object_refs"] == []
     assert finance_payload["answer_text"] == "I do not have matching knowledge for that question yet."
     assert finance_payload["evidence"] == []
+
+
+def test_api_ingest_without_ocr_keeps_pipeline_run_running(tmp_path):
+    client, engine = _create_test_client(tmp_path)
+
+    ingest_response = client.post(
+        "/ingest",
+        json={
+            "filename": "capture-ingest-only.png",
+            "media_type": "image/png",
+            "connector_instance_id": "manual-upload",
+            "content_base64": b64encode(b"ingest only bytes").decode("ascii"),
+        },
+    )
+
+    assert ingest_response.status_code == 201
+
+    with Session(engine) as session:
+        pipeline_run = session.scalar(
+            select(PipelineRun)
+            .where(PipelineRun.source_item_id == ingest_response.json()["source_item_id"])
+            .order_by(PipelineRun.id.desc())
+        )
+
+    assert pipeline_run is not None
+    assert pipeline_run.status == "running"
+    assert pipeline_run.finished_at is None
 
 
 def test_api_does_not_fabricate_travel_knowledge_from_finance_ticket_reminder(tmp_path):
@@ -330,3 +379,8 @@ def _create_test_client(tmp_path):
     app = create_app(database_url=f"sqlite:///{database_path}", blob_dir=tmp_path / "blobs")
     engine = create_engine_with_sqlite_pragmas(f"sqlite:///{database_path}")
     return TestClient(app), engine
+
+
+def _create_engine_for_existing_db(tmp_path, database_name: str):
+    database_path = tmp_path / database_name
+    return create_engine_with_sqlite_pragmas(f"sqlite:///{database_path}")

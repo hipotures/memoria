@@ -359,6 +359,118 @@ def test_absorb_marks_task_claim_uncertain_when_new_signal_conflicts(tmp_path):
     assert task_claims[0].status == "uncertain"
 
 
+@pytest.mark.parametrize(
+    ("semantic_summary", "expected_status"),
+    [
+        (
+            "Telegram chat about a Berlin trip and booking train tickets not done yet.",
+            "open",
+        ),
+        (
+            "Telegram chat about a Berlin trip and booking train tickets not completed.",
+            "open",
+        ),
+        (
+            "Telegram chat about a Berlin trip and booking train tickets not shipped.",
+            "open",
+        ),
+        (
+            "Telegram chat about a Berlin trip and booking train tickets unshipped.",
+            "open",
+        ),
+        (
+            "Telegram chat about a Berlin trip and booking train tickets still open.",
+            "open",
+        ),
+        (
+            "Telegram chat about a Berlin trip and booking train tickets pending.",
+            "open",
+        ),
+        (
+            "Telegram chat about a Berlin trip and booking train tickets completed.",
+            "done",
+        ),
+    ],
+)
+def test_absorb_infers_task_status_from_negated_and_positive_completion_phrases(
+    tmp_path,
+    semantic_summary,
+    expected_status,
+):
+    from memoria.knowledge.service import absorb_interpreted_screenshot
+    from memoria.vision.contracts import CandidateRef
+    from memoria.vision.contracts import VisionInterpretation
+    from memoria.vision.service import RunVisionStageCommand
+    from memoria.vision.service import run_vision_stage
+
+    engine = _create_engine(tmp_path, "absorb-negation.db")
+
+    with Session(engine) as session:
+        ingest_result = ingest_screenshot(
+            session,
+            IngestScreenshotCommand(
+                filename="capture-negation.png",
+                media_type="image/png",
+                content=semantic_summary.encode("utf-8"),
+                connector_instance_id="manual-upload",
+                external_id="capture-negation",
+                blob_dir=tmp_path / "blobs",
+            ),
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        run_vision_stage(
+            session,
+            RunVisionStageCommand(
+                pipeline_run_id=ingest_result.pipeline_run_id,
+                source_item_id=ingest_result.source_item_id,
+                interpretation=VisionInterpretation(
+                    screen_category="chat",
+                    semantic_summary=semantic_summary,
+                    app_hint="telegram",
+                    topic_candidates=[
+                        CandidateRef(
+                            slug="trip-to-berlin",
+                            title="Trip to Berlin",
+                            confidence=0.95,
+                        )
+                    ],
+                    task_candidates=[
+                        CandidateRef(
+                            slug="book-train",
+                            title="Book train",
+                            confidence=0.89,
+                        )
+                    ],
+                    person_candidates=[],
+                    confidence={"screen_category": 0.91, "semantic_summary": 0.85},
+                ),
+            ),
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        absorb_interpreted_screenshot(
+            session,
+            pipeline_run_id=ingest_result.pipeline_run_id,
+            source_item_id=ingest_result.source_item_id,
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        task_claim = session.scalar(
+            select(KnowledgeClaim).where(
+                KnowledgeClaim.claim_type == "task_status",
+                KnowledgeClaim.subject_ref == "task:book-train",
+                KnowledgeClaim.predicate == "status",
+            )
+        )
+
+    assert task_claim is not None
+    assert task_claim.object_ref_or_value == expected_status
+
+
 def _create_engine(tmp_path, database_name: str):
     database_path = tmp_path / database_name
     alembic_ini = Path(__file__).resolve().parents[2] / "alembic.ini"
