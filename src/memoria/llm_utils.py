@@ -43,6 +43,7 @@ def build_ollama_options_payload(
     max_output_tokens: int | None,
     ollama_num_predict: int | None,
     ollama_num_ctx: int | None,
+    seed: int | None = None,
 ) -> dict[str, Any]:
     options: dict[str, Any] = {"temperature": temperature}
     if ollama_num_predict is not None:
@@ -51,6 +52,8 @@ def build_ollama_options_payload(
         options["num_predict"] = max_output_tokens
     if ollama_num_ctx is not None:
         options["num_ctx"] = ollama_num_ctx
+    if seed is not None:
+        options["seed"] = seed
     return options
 
 

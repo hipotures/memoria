@@ -45,8 +45,9 @@ def test_build_ollama_options_payload_prefers_num_predict_override() -> None:
         max_output_tokens=4096,
         ollama_num_predict=2048,
         ollama_num_ctx=8192,
+        seed=42,
     )
-    assert options == {"temperature": 0.0, "num_predict": 2048, "num_ctx": 8192}
+    assert options == {"temperature": 0.0, "num_predict": 2048, "num_ctx": 8192, "seed": 42}
 
 
 def test_extract_app_hint_from_filename_for_phone_screenshot() -> None:

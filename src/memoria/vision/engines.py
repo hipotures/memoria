@@ -145,6 +145,7 @@ class OllamaVisionEngine:
         max_output_tokens: int | None = 800,
         keep_alive: str = "5m",
         think: str = "false",
+        seed: int | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self._api_base_url = api_base_url
@@ -154,6 +155,7 @@ class OllamaVisionEngine:
         self._max_output_tokens = max_output_tokens
         self._keep_alive = keep_alive
         self._think = think
+        self._seed = seed
         self._client = client or httpx.Client(timeout=timeout_seconds)
 
     def analyze(
@@ -208,6 +210,7 @@ class OllamaVisionEngine:
                 max_output_tokens=self._max_output_tokens,
                 ollama_num_predict=None,
                 ollama_num_ctx=None,
+                seed=self._seed,
             ),
         }
         payload.update(build_ollama_reasoning_payload(self._think))
@@ -247,6 +250,7 @@ class OpenAICompatibleVisionEngine:
         temperature: float = 0.0,
         timeout_seconds: float = 60.0,
         max_output_tokens: int | None = 800,
+        seed: int | None = None,
         client: httpx.Client | None = None,
     ) -> None:
         self._engine_name = engine_name
@@ -255,6 +259,7 @@ class OpenAICompatibleVisionEngine:
         self._temperature = temperature
         self._timeout_seconds = timeout_seconds
         self._max_output_tokens = max_output_tokens
+        self._seed = seed
         self._client = client or httpx.Client(timeout=timeout_seconds)
 
     def analyze(
@@ -315,6 +320,8 @@ class OpenAICompatibleVisionEngine:
         }
         if self._max_output_tokens is not None:
             payload["max_tokens"] = self._max_output_tokens
+        if self._seed is not None:
+            payload["seed"] = self._seed
 
         url = normalize_openai_api_base_url(self._api_base_url) + "/v1/chat/completions"
         response = self._client.post(url, json=payload)

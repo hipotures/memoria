@@ -316,6 +316,7 @@ def _create_vision_engine(settings: RuntimeSettings) -> VisionEngine:
             max_output_tokens=settings.vision_max_output_tokens,
             keep_alive=settings.ollama_keep_alive,
             think=settings.ollama_think,
+            seed=settings.seed,
         )
     if settings.vision_engine in {"vllm", "llamacpp"}:
         return OpenAICompatibleVisionEngine(
@@ -325,5 +326,6 @@ def _create_vision_engine(settings: RuntimeSettings) -> VisionEngine:
             temperature=settings.vision_temperature,
             timeout_seconds=settings.vision_timeout_seconds,
             max_output_tokens=settings.vision_max_output_tokens,
+            seed=settings.seed,
         )
     raise ValueError(f"unsupported vision engine: {settings.vision_engine}")

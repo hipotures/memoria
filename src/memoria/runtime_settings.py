@@ -11,6 +11,7 @@ from dotenv import load_dotenv
 @dataclass(frozen=True, slots=True)
 class RuntimeSettings:
     database_url: str = ""
+    seed: int = 42
     ocr_engine: str = "paddleocr"
     ocr_language_hint: str | None = None
     paddle_lang: str = "en"
@@ -20,7 +21,7 @@ class RuntimeSettings:
     vision_language_hint: str = "pl,en"
     vision_api_base_url: str = "http://127.0.0.1:11434"
     vision_model: str = "qwen3.5:9b"
-    vision_temperature: float = 0.0
+    vision_temperature: float = 0.1
     vision_timeout_seconds: float = 60.0
     vision_max_output_tokens: int | None = 800
     ollama_keep_alive: str = "5m"
@@ -31,6 +32,7 @@ def load_runtime_settings_from_env() -> RuntimeSettings:
     _load_dotenv_from_cwd()
     return RuntimeSettings(
         database_url=os.getenv("MEMORIA_DATABASE_URL", _default_database_url()),
+        seed=_env_int_or_none("MEMORIA_SEED", 42),
         ocr_engine=os.getenv("MEMORIA_OCR_ENGINE", "paddleocr"),
         ocr_language_hint=_env_or_none("MEMORIA_OCR_LANGUAGE_HINT"),
         paddle_lang=os.getenv("MEMORIA_PADDLE_LANG", "en"),
@@ -40,7 +42,7 @@ def load_runtime_settings_from_env() -> RuntimeSettings:
         vision_language_hint=os.getenv("MEMORIA_VISION_LANGUAGE_HINT", "pl,en"),
         vision_api_base_url=os.getenv("MEMORIA_VISION_API_BASE_URL", "http://127.0.0.1:11434"),
         vision_model=os.getenv("MEMORIA_VISION_MODEL", "qwen3.5:9b"),
-        vision_temperature=float(os.getenv("MEMORIA_VISION_TEMPERATURE", "0.0")),
+        vision_temperature=float(os.getenv("MEMORIA_VISION_TEMPERATURE", "0.1")),
         vision_timeout_seconds=float(os.getenv("MEMORIA_VISION_TIMEOUT_SECONDS", "60.0")),
         vision_max_output_tokens=_env_int_or_none("MEMORIA_VISION_MAX_OUTPUT_TOKENS", 800),
         ollama_keep_alive=os.getenv("MEMORIA_OLLAMA_KEEP_ALIVE", "5m"),
