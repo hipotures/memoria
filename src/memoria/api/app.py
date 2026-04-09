@@ -178,8 +178,8 @@ def _process_screenshot_pipeline(
             refresh_assistant_context_projection(session, object_ref=object_ref)
             if object_ref.startswith("topic:"):
                 refresh_topic_status_projection(session, object_ref=object_ref)
-        if pipeline_run.status != "completed":
-            mark_pipeline_run_completed(session, pipeline_run)
+    if pipeline_run.status != "completed":
+        mark_pipeline_run_completed(session, pipeline_run)
 
 
 def _ensure_ocr_text(

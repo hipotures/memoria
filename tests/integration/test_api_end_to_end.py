@@ -220,7 +220,7 @@ def test_api_ingest_without_manual_ocr_runs_real_engine_path(tmp_path):
 
 
 def test_api_does_not_fabricate_travel_knowledge_from_finance_ticket_reminder(tmp_path):
-    client, _ = _create_test_client(tmp_path)
+    client, engine = _create_test_client(tmp_path)
 
     ingest_response = client.post(
         "/ingest",
@@ -254,6 +254,17 @@ def test_api_does_not_fabricate_travel_knowledge_from_finance_ticket_reminder(tm
     else:
         assert payload["answer_text"] == "I do not have matching knowledge for that question yet."
         assert payload["evidence"] == []
+
+    with Session(engine) as session:
+        pipeline_run = session.scalar(
+            select(PipelineRun)
+            .where(PipelineRun.source_item_id == ingest_response.json()["source_item_id"])
+            .order_by(PipelineRun.id.desc())
+        )
+
+    assert pipeline_run is not None
+    assert pipeline_run.status == "completed"
+    assert pipeline_run.finished_at is not None
 
 
 def test_api_manual_ocr_text_bypasses_runtime_ocr_engine(tmp_path):
