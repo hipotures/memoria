@@ -12,8 +12,12 @@ from memoria.domain.models import AssetInterpretation
 from memoria.domain.models import ContentFragment
 from memoria.domain.models import PipelineRun
 from memoria.domain.models import StageResult
+from memoria.pipeline import mark_pipeline_run_failed
 from memoria.pipeline import record_stage_result
 from memoria.vision.contracts import VisionInterpretation
+from memoria.vision.engines import VisionEngine
+from memoria.vision.engines import extract_app_hint_from_filename
+from memoria.vision.mapper import map_vision_analysis_to_interpretation
 
 
 @dataclass(slots=True)
@@ -21,6 +25,21 @@ class RunVisionStageCommand:
     pipeline_run_id: int
     source_item_id: int
     interpretation: VisionInterpretation
+
+
+@dataclass(slots=True)
+class ExecuteVisionStageCommand:
+    pipeline_run_id: int
+    source_item_id: int
+    image_bytes: bytes
+    media_type: str
+    ocr_text: str
+    language_hint: str
+    original_filename: str
+
+
+class VisionStageExecutionError(RuntimeError):
+    pass
 
 
 def run_vision_stage(session: Session, command: RunVisionStageCommand) -> None:
@@ -96,6 +115,49 @@ def run_vision_stage(session: Session, command: RunVisionStageCommand) -> None:
     )
 
 
+def execute_vision_stage(
+    session: Session,
+    command: ExecuteVisionStageCommand,
+    *,
+    engine: VisionEngine,
+) -> VisionInterpretation:
+    pipeline_run = session.get(PipelineRun, command.pipeline_run_id)
+    if pipeline_run is None or pipeline_run.source_item_id != command.source_item_id:
+        raise ValueError("pipeline_run_id does not belong to source_item_id")
+
+    try:
+        analysis = engine.analyze(
+            image_bytes=command.image_bytes,
+            media_type=command.media_type,
+            language_hint=command.language_hint,
+            app_hint_from_filename=extract_app_hint_from_filename(command.original_filename),
+            ocr_text=command.ocr_text,
+        )
+        interpretation = map_vision_analysis_to_interpretation(
+            analysis=analysis,
+            ocr_text=command.ocr_text,
+            original_filename=command.original_filename,
+        )
+    except Exception as exc:
+        _record_failed_vision_stage(
+            session,
+            pipeline_run_id=command.pipeline_run_id,
+            error_text=str(exc),
+        )
+        mark_pipeline_run_failed(session, pipeline_run)
+        raise VisionStageExecutionError(str(exc)) from exc
+
+    run_vision_stage(
+        session,
+        RunVisionStageCommand(
+            pipeline_run_id=command.pipeline_run_id,
+            source_item_id=command.source_item_id,
+            interpretation=interpretation,
+        ),
+    )
+    return interpretation
+
+
 def _serialize_candidates(candidates: list[object]) -> str:
     return json.dumps([asdict(candidate) for candidate in candidates], sort_keys=True)
 
@@ -146,3 +208,26 @@ def _delete_fragment(
     )
     if fragment is not None:
         session.delete(fragment)
+
+
+def _record_failed_vision_stage(
+    session: Session,
+    *,
+    pipeline_run_id: int,
+    error_text: str,
+) -> None:
+    next_attempt = session.scalar(
+        select(func.coalesce(func.max(StageResult.attempt), 0) + 1).where(
+            StageResult.pipeline_run_id == pipeline_run_id,
+            StageResult.stage_name == "vision",
+        )
+    )
+    assert next_attempt is not None
+    record_stage_result(
+        session,
+        pipeline_run_id=pipeline_run_id,
+        stage_name="vision",
+        status="failed",
+        error_text=error_text,
+        attempt=next_attempt,
+    )

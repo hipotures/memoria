@@ -13,6 +13,8 @@ from sqlalchemy.orm import Session
 from memoria.domain.models import PipelineRun
 from memoria.domain.models import SourceItem
 from memoria.storage.metadata_db import create_engine_with_sqlite_pragmas
+from memoria.vision.engines import CategoryLabel
+from memoria.vision.engines import VisionEngineResult
 
 
 def test_api_can_ingest_and_answer_status_question(tmp_path):
@@ -28,7 +30,12 @@ def test_api_can_ingest_and_answer_status_question(tmp_path):
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
     command.upgrade(config, "head")
 
-    app = create_app(database_url=f"sqlite:///{database_path}", blob_dir=tmp_path / "blobs")
+    app = create_app(
+        database_url=f"sqlite:///{database_path}",
+        blob_dir=tmp_path / "blobs",
+        ocr_engine=_FakeOcrEngine(),
+        vision_engine=_FakeVisionEngine(),
+    )
     client = TestClient(app)
 
     ingest_response = client.post(
@@ -136,7 +143,7 @@ def test_api_duplicate_ingest_with_same_bytes_stays_idempotent(tmp_path):
     assert finance_payload["evidence"] == []
 
 
-def test_api_ingest_without_ocr_keeps_pipeline_run_running(tmp_path):
+def test_api_ingest_without_manual_ocr_runs_real_engine_path(tmp_path):
     client, engine = _create_test_client(tmp_path)
 
     ingest_response = client.post(
@@ -159,8 +166,18 @@ def test_api_ingest_without_ocr_keeps_pipeline_run_running(tmp_path):
         )
 
     assert pipeline_run is not None
-    assert pipeline_run.status == "running"
-    assert pipeline_run.finished_at is None
+    assert pipeline_run.status == "completed"
+    assert pipeline_run.finished_at is not None
+
+    assistant_response = client.post(
+        "/assistant/query",
+        json={"question": "What is going on lately with the Berlin trip?"},
+    )
+
+    assert assistant_response.status_code == 200
+    payload = assistant_response.json()
+    assert payload["answer_source"] == "knowledge"
+    assert "Berlin" in payload["answer_text"]
 
 
 def test_api_does_not_fabricate_travel_knowledge_from_finance_ticket_reminder(tmp_path):
@@ -198,6 +215,45 @@ def test_api_does_not_fabricate_travel_knowledge_from_finance_ticket_reminder(tm
     else:
         assert payload["answer_text"] == "I do not have matching knowledge for that question yet."
         assert payload["evidence"] == []
+
+
+def test_api_manual_ocr_text_bypasses_runtime_ocr_engine(tmp_path):
+    from fastapi.testclient import TestClient
+
+    try:
+        from memoria.api.app import create_app
+    except ImportError as exc:
+        pytest.fail(f"api app not implemented yet: {exc}")
+
+    database_path = tmp_path / "api-manual.db"
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+
+    class _FailIfCalledOcrEngine:
+        def extract_text(self, *, image_bytes: bytes, media_type: str, language_hint: str | None = None):
+            raise AssertionError("runtime OCR engine should not be called when ocr_text is provided")
+
+    app = create_app(
+        database_url=f"sqlite:///{database_path}",
+        blob_dir=tmp_path / "blobs",
+        ocr_engine=_FailIfCalledOcrEngine(),
+        vision_engine=_FakeVisionEngine(),
+    )
+    client = TestClient(app)
+
+    ingest_response = client.post(
+        "/ingest",
+        json={
+            "filename": "capture-manual-ocr.png",
+            "media_type": "image/png",
+            "connector_instance_id": "manual-upload",
+            "content_base64": b64encode(b"manual ocr screenshot").decode("ascii"),
+            "ocr_text": "Alice: book train tickets for Berlin",
+        },
+    )
+
+    assert ingest_response.status_code == 201
 
 
 def test_api_does_not_fabricate_trip_topic_from_train_booking_for_finance(tmp_path):
@@ -376,7 +432,12 @@ def _create_test_client(tmp_path):
     config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
     command.upgrade(config, "head")
 
-    app = create_app(database_url=f"sqlite:///{database_path}", blob_dir=tmp_path / "blobs")
+    app = create_app(
+        database_url=f"sqlite:///{database_path}",
+        blob_dir=tmp_path / "blobs",
+        ocr_engine=_FakeOcrEngine(),
+        vision_engine=_FakeVisionEngine(),
+    )
     engine = create_engine_with_sqlite_pragmas(f"sqlite:///{database_path}")
     return TestClient(app), engine
 
@@ -384,3 +445,50 @@ def _create_test_client(tmp_path):
 def _create_engine_for_existing_db(tmp_path, database_name: str):
     database_path = tmp_path / database_name
     return create_engine_with_sqlite_pragmas(f"sqlite:///{database_path}")
+
+
+class _FakeOcrEngine:
+    def extract_text(self, *, image_bytes: bytes, media_type: str, language_hint: str | None = None):
+        from memoria.ocr.engines import OcrEngineResult
+
+        return OcrEngineResult(
+            engine_name="fake-paddleocr",
+            text_content="Alice: book train tickets for Berlin",
+            language_hint=language_hint,
+            block_map_json="[]",
+        )
+
+
+class _FakeVisionEngine:
+    def analyze(
+        self,
+        *,
+        image_bytes: bytes,
+        media_type: str,
+        language_hint: str,
+        app_hint_from_filename: str,
+        ocr_text: str,
+    ):
+        lower_text = ocr_text.lower()
+        has_chat_signal = ":" in ocr_text
+        category = "chat" if has_chat_signal else "generic"
+        app_hint = "telegram" if has_chat_signal else None
+        summary = ocr_text or "generic screenshot"
+        secondary_category = (
+            CategoryLabel(pl="travel", en="travel")
+            if "train" in lower_text
+            else CategoryLabel(pl="ui", en="ui")
+        )
+        return VisionEngineResult(
+            engine_name="fake-vision",
+            summary_pl=summary,
+            summary_en=summary,
+            categories=[
+                CategoryLabel(pl=category, en=category),
+                secondary_category,
+                CategoryLabel(pl="task", en="task"),
+                CategoryLabel(pl="reminder", en="reminder"),
+                CategoryLabel(pl="assistant", en="assistant"),
+            ],
+            app_hint=app_hint,
+        )
