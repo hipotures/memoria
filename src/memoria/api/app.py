@@ -12,6 +12,7 @@ from sqlalchemy.orm import Session
 
 from memoria.api.schemas import AssistantQueryRequest
 from memoria.api.schemas import IngestScreenshotRequest
+from memoria.api.screenshots import create_screenshot_router
 from memoria.assistant.service import answer_question
 from memoria.domain.models import AssetInterpretation
 from memoria.domain.models import AssetOcrText
@@ -60,6 +61,7 @@ def create_app(
     resolved_ocr_engine = ocr_engine or _create_ocr_engine(settings)
     resolved_vision_engine = vision_engine or _create_vision_engine(settings)
     app = FastAPI()
+    app.include_router(create_screenshot_router(engine=engine))
 
     @app.post("/ingest", status_code=201)
     def ingest_endpoint(payload: IngestScreenshotRequest) -> dict[str, int | str]:
