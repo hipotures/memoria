@@ -6,6 +6,7 @@ from dataclasses import field
 from datetime import datetime
 
 from sqlalchemy import func
+from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -810,6 +811,22 @@ def _item_order(sort: str):
             AtlasItem.observed_at.asc(),
             AtlasItem.source_item_id.asc(),
         )
+    if sort == "app_hint_asc":
+        return (
+            AtlasItem.app_hint.is_(None).asc(),
+            func.lower(AtlasItem.app_hint).asc(),
+            AtlasItem.observed_at.is_(None).asc(),
+            AtlasItem.observed_at.desc(),
+            AtlasItem.source_item_id.asc(),
+        )
+    if sort == "semantic_summary_asc":
+        return (
+            AtlasItem.semantic_summary.is_(None).asc(),
+            func.lower(AtlasItem.semantic_summary).asc(),
+            AtlasItem.observed_at.is_(None).asc(),
+            AtlasItem.observed_at.desc(),
+            AtlasItem.source_item_id.asc(),
+        )
     if sort == "source_item_id_asc":
         return (AtlasItem.source_item_id.asc(),)
     if sort == "source_item_id_desc":
@@ -845,4 +862,13 @@ def _build_atlas_filter_clauses(filters: ScreenshotReadFilters) -> list[object]:
         clauses.append(AtlasItem.observed_at >= filters.observed_from)
     if filters.observed_to is not None:
         clauses.append(AtlasItem.observed_at <= filters.observed_to)
+    if filters.search_query is not None:
+        like_term = f"%{filters.search_query.strip()}%"
+        clauses.append(
+            or_(
+                AtlasItem.semantic_summary.ilike(like_term),
+                AtlasItem.app_hint.ilike(like_term),
+                AtlasItem.object_refs_json.ilike(like_term),
+            )
+        )
     return clauses

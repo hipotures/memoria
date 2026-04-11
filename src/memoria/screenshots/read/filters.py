@@ -19,6 +19,7 @@ class ScreenshotReadFilters:
     has_knowledge: bool | None = None
     observed_from: datetime | None = None
     observed_to: datetime | None = None
+    search_query: str | None = None
 
     def has_any(self) -> bool:
         return any(
@@ -30,6 +31,7 @@ class ScreenshotReadFilters:
                 self.has_knowledge,
                 self.observed_from,
                 self.observed_to,
+                self.search_query,
             )
         )
 

@@ -46,6 +46,7 @@ def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter
         has_knowledge: bool | None = Query(None),
         observed_from: datetime | None = Query(None),
         observed_to: datetime | None = Query(None),
+        search_query: str | None = Query(None),
     ) -> dict[str, object]:
         with Session(engine) as session:
             result = atlas_service.get_atlas_overview(
@@ -57,6 +58,7 @@ def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter
                     has_knowledge=has_knowledge,
                     observed_from=observed_from,
                     observed_to=observed_to,
+                    search_query=search_query,
                 ),
             )
         return asdict(result)
@@ -70,6 +72,7 @@ def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter
         has_knowledge: bool | None = Query(None),
         observed_from: datetime | None = Query(None),
         observed_to: datetime | None = Query(None),
+        search_query: str | None = Query(None),
     ) -> dict[str, object]:
         with Session(engine) as session:
             result = atlas_service.get_atlas_region_detail(
@@ -82,6 +85,7 @@ def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter
                     has_knowledge=has_knowledge,
                     observed_from=observed_from,
                     observed_to=observed_to,
+                    search_query=search_query,
                 ),
             )
         if result is None:
@@ -101,6 +105,7 @@ def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter
         has_knowledge: bool | None = Query(None),
         observed_from: datetime | None = Query(None),
         observed_to: datetime | None = Query(None),
+        search_query: str | None = Query(None),
     ) -> dict[str, object]:
         try:
             with Session(engine) as session:
@@ -118,6 +123,7 @@ def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter
                         has_knowledge=has_knowledge,
                         observed_from=observed_from,
                         observed_to=observed_to,
+                        search_query=search_query,
                     ),
                 )
         except ValueError as exc:
@@ -138,6 +144,7 @@ def _atlas_filters(
     has_knowledge: bool | None,
     observed_from: datetime | None,
     observed_to: datetime | None,
+    search_query: str | None,
 ) -> ScreenshotReadFilters:
     return ScreenshotReadFilters(
         connector_instance_id=connector_instance_id,
@@ -146,6 +153,7 @@ def _atlas_filters(
         has_knowledge=has_knowledge,
         observed_from=observed_from,
         observed_to=observed_to,
+        search_query=search_query,
     )
 
 

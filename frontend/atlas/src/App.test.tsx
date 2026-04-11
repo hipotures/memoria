@@ -22,141 +22,15 @@ describe("App", () => {
       const url = new URL(String(input), "http://localhost");
 
       if (url.pathname === "/atlas/overview") {
-        return jsonResponse({
-          atlas_run: buildAtlasRun(),
-          regions: [
-            buildRegion({
-              region_key: "region-travel",
-              title: "Travel Planning",
-              x: -200,
-              y: 30,
-              overlay: { match_count: 8 },
-              top_apps: ["Telegram", "Gmail"],
-              top_labels: ["travel planning", "itinerary"],
-            }),
-            buildRegion({
-              region_key: "region-finance",
-              title: "Finance Review",
-              x: 220,
-              y: -40,
-              overlay: { match_count: 2 },
-              top_apps: ["Slack"],
-              top_labels: ["budget"],
-            }),
-          ],
-          edges: [
-            {
-              source_region_key: "region-travel",
-              target_region_key: "region-finance",
-              weight: 0.36,
-              edge_type: "bridge",
-            },
-          ],
-          active_filters: {
-            app_hint: url.searchParams.get("app_hint"),
-            observed_from: url.searchParams.get("observed_from"),
-            observed_to: url.searchParams.get("observed_to"),
-            has_knowledge:
-              url.searchParams.get("has_knowledge") === null
-                ? null
-                : url.searchParams.get("has_knowledge") === "true",
-          },
-        });
+        return jsonResponse(buildOverviewPayload(url));
       }
 
       if (url.pathname === "/atlas/regions/region-travel") {
-        return jsonResponse({
-          atlas_run: buildAtlasRun(),
-          region: buildRegion({
-            region_key: "region-travel",
-            title: "Travel Planning",
-            overlay: { match_count: 8 },
-            top_apps: ["Telegram", "Gmail"],
-            top_labels: ["travel planning", "itinerary"],
-          }),
-          subregions: [
-            buildRegion({
-              region_key: "region-travel/subregion-1",
-              parent_region_key: "region-travel",
-              level: 1,
-              title: "Trip booking lane",
-              x: -110,
-              y: -20,
-              overlay: { match_count: 5 },
-            }),
-            buildRegion({
-              region_key: "region-travel/subregion-2",
-              parent_region_key: "region-travel",
-              level: 1,
-              title: "Packing lane",
-              x: 120,
-              y: 35,
-              overlay: { match_count: 3 },
-            }),
-          ],
-          representatives: [
-            buildItem({
-              source_item_id: 101,
-              region_key: "region-travel",
-              semantic_summary: "Trip research in Telegram",
-              app_hint: "Telegram",
-              is_representative: true,
-              representative_rank: 1,
-            }),
-          ],
-          active_filters: {},
-        });
+        return jsonResponse(buildRegionDetailPayload(url));
       }
 
       if (url.pathname === "/atlas/evidence") {
-        return jsonResponse({
-          atlas_run: buildAtlasRun(),
-          region_key: "region-travel",
-          subregion_key: url.searchParams.get("subregion_key"),
-          sort: "observed_at_desc",
-          representatives: [
-            buildItem({
-              source_item_id: 101,
-              region_key: "region-travel",
-              subregion_key: "region-travel/subregion-1",
-              semantic_summary: "Trip research in Telegram",
-              app_hint: "Telegram",
-              is_representative: true,
-              representative_rank: 1,
-            }),
-          ],
-          bridges: [
-            buildItem({
-              source_item_id: 202,
-              region_key: "region-travel",
-              subregion_key: "region-travel/subregion-1",
-              semantic_summary: "Budget handoff to finance notes",
-              app_hint: "Sheets",
-              is_bridge: true,
-              bridge_type: "cross-region",
-            }),
-          ],
-          long_tail_page: {
-            items: [
-              buildItem({
-                source_item_id: 303,
-                region_key: "region-travel",
-                subregion_key: "region-travel/subregion-1",
-                semantic_summary: "Hotel shortlist screenshot",
-                app_hint: "Chrome",
-              }),
-            ],
-            limit: 25,
-            offset: 0,
-            total: 1,
-          },
-          section_totals: {
-            representatives: 1,
-            bridges: 1,
-            long_tail: 1,
-          },
-          active_filters: {},
-        });
+        return jsonResponse(buildEvidencePayload(url));
       }
 
       throw new Error(`Unhandled atlas request: ${url.pathname}`);
@@ -173,22 +47,21 @@ describe("App", () => {
     container.remove();
   });
 
-  it("keeps the dock active from overview and drills down only on explicit actions", async () => {
+  it("loads region workbench content on overview selection before explicit drill-down", async () => {
     await renderApp(root);
 
     await waitForText(container, "Atlas overview");
-    expect(container.textContent).toContain("Travel Planning");
-    expect(fetchMock).toHaveBeenCalledTimes(1);
     expect(requestPaths(fetchMock)).toEqual(["/atlas/overview"]);
 
     act(() => {
       findButton("Travel Planning", container).click();
     });
 
-    expect(requestPaths(fetchMock)).toEqual(["/atlas/overview"]);
-    expect(findButton("Enter region", container).disabled).toBe(false);
-    expect(container.textContent).toContain("Travel Planning");
-    expect(container.textContent).toContain("8 matching screenshots");
+    await waitForText(container, "2 representative screenshots");
+    expect(requestPaths(fetchMock)).toEqual(["/atlas/overview", "/atlas/regions/region-travel"]);
+    expect(container.textContent).toContain("Trip research in Telegram");
+    expect(container.textContent).toContain("2 representative screenshots");
+    expect(container.textContent).not.toContain("Budget handoff to finance notes");
 
     act(() => {
       findButton("Enter region", container).click();
@@ -196,35 +69,25 @@ describe("App", () => {
 
     await waitForText(container, "Trip booking lane");
     expect(requestPaths(fetchMock)).toEqual(["/atlas/overview", "/atlas/regions/region-travel"]);
-    expect(findButton("Open evidence", container).disabled).toBe(true);
 
     act(() => {
       findButton("Trip booking lane", container).click();
     });
 
-    expect(requestPaths(fetchMock)).toEqual(["/atlas/overview", "/atlas/regions/region-travel"]);
+    await flush();
+
+    expect(container.textContent).toContain("Trip booking lane");
+    expect(container.textContent).toContain("arrival logistics");
+    expect(container.textContent).toContain("maps");
     expect(findButton("Open evidence", container).disabled).toBe(false);
-
-    act(() => {
-      findButton("Open evidence", container).click();
-    });
-
-    await waitForText(container, "Representatives");
-    expect(requestPaths(fetchMock)).toEqual([
-      "/atlas/overview",
-      "/atlas/regions/region-travel",
-      "/atlas/evidence",
-    ]);
-    expect(container.textContent).toContain("Budget handoff to finance notes");
-    expect(container.textContent).toContain("Hotel shortlist screenshot");
   });
 
-  it("applies toolbar filters to overview requests and can reset them", async () => {
+  it("sends backend search state through overview, region detail, and evidence requests", async () => {
     await renderApp(root);
     await waitForText(container, "Atlas overview");
 
     act(() => {
-      changeInput(findInput("Search atlas", container), "travel");
+      changeInput(findInput("Search atlas", container), "hotel");
       changeInput(findInput("App", container), "Telegram");
       changeInput(findInput("Observed from", container), "2026-03-01");
       changeInput(findInput("Observed to", container), "2026-03-31");
@@ -237,27 +100,93 @@ describe("App", () => {
 
     await flush();
 
-    const applyRequest = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0] as string;
-    const applyUrl = new URL(applyRequest, "http://localhost");
-    expect(applyUrl.pathname).toBe("/atlas/overview");
-    expect(applyUrl.searchParams.get("app_hint")).toBe("Telegram");
-    expect(applyUrl.searchParams.get("observed_from")).toBe("2026-03-01T00:00:00.000Z");
-    expect(applyUrl.searchParams.get("observed_to")).toBe("2026-03-31T23:59:59.999Z");
-    expect(applyUrl.searchParams.get("has_knowledge")).toBe("true");
-    expect(container.textContent).toContain("1 active search term");
+    const overviewUrl = lastRequestUrl(fetchMock);
+    expect(overviewUrl.pathname).toBe("/atlas/overview");
+    expect(overviewUrl.searchParams.get("search_query")).toBe("hotel");
+    expect(overviewUrl.searchParams.get("app_hint")).toBe("Telegram");
+    expect(overviewUrl.searchParams.get("observed_from")).toBe("2026-03-01T00:00:00.000Z");
+    expect(overviewUrl.searchParams.get("observed_to")).toBe("2026-03-31T23:59:59.999Z");
+    expect(overviewUrl.searchParams.get("has_knowledge")).toBe("true");
 
     act(() => {
-      findButton("Reset filters", container).click();
+      findButton("Travel Planning", container).click();
+    });
+
+    await waitForText(container, "Hotel confirmation thread");
+
+    const detailUrl = lastRequestUrl(fetchMock);
+    expect(detailUrl.pathname).toBe("/atlas/regions/region-travel");
+    expect(detailUrl.searchParams.get("search_query")).toBe("hotel");
+    expect(detailUrl.searchParams.get("app_hint")).toBe("Telegram");
+
+    act(() => {
+      findButton("Enter region", container).click();
+    });
+
+    await waitForText(container, "Trip booking lane");
+
+    act(() => {
+      findButton("Trip booking lane", container).click();
     });
 
     await flush();
 
-    const resetRequest = fetchMock.mock.calls[fetchMock.mock.calls.length - 1]?.[0] as string;
-    const resetUrl = new URL(resetRequest, "http://localhost");
-    expect(resetUrl.pathname).toBe("/atlas/overview");
-    expect(resetUrl.search).toBe("");
-    expect(findInput("App", container).value).toBe("");
-    expect(findSelect("Knowledge", container).value).toBe("all");
+    act(() => {
+      findButton("Open evidence", container).click();
+    });
+
+    await waitForText(container, "Evidence stack");
+
+    const evidenceUrl = lastRequestUrl(fetchMock);
+    expect(evidenceUrl.pathname).toBe("/atlas/evidence");
+    expect(evidenceUrl.searchParams.get("search_query")).toBe("hotel");
+    expect(evidenceUrl.searchParams.get("sort")).toBe("observed_at_desc");
+    expect(container.textContent).toContain("Showing 1-1 of 8");
+  });
+
+  it("uses backend evidence sort options rather than client-side reshuffling", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      findButton("Travel Planning", container).click();
+    });
+
+    await waitForText(container, "2 representative screenshots");
+
+    act(() => {
+      findButton("Enter region", container).click();
+    });
+
+    await waitForText(container, "Trip booking lane");
+
+    act(() => {
+      findButton("Trip booking lane", container).click();
+    });
+
+    await flush();
+
+    act(() => {
+      findButton("Open evidence", container).click();
+    });
+
+    await waitForText(container, "Notes packing checklist");
+    expect(indexOfText(container, "Notes packing checklist")).toBeLessThan(
+      indexOfText(container, "Browser booking confirmation"),
+    );
+
+    act(() => {
+      changeSelect(findSelect("Evidence order", container), "app_hint_asc");
+    });
+
+    await waitForText(container, "Calendar departure reminder");
+
+    const sortedEvidenceUrl = lastRequestUrl(fetchMock);
+    expect(sortedEvidenceUrl.pathname).toBe("/atlas/evidence");
+    expect(sortedEvidenceUrl.searchParams.get("sort")).toBe("app_hint_asc");
+    expect(indexOfText(container, "Browser booking confirmation")).toBeLessThan(
+      indexOfText(container, "Calendar departure reminder"),
+    );
   });
 });
 
@@ -288,6 +217,11 @@ async function flush() {
 
 function requestPaths(mock: ReturnType<typeof vi.fn>): string[] {
   return mock.mock.calls.map(([input]) => new URL(String(input), "http://localhost").pathname);
+}
+
+function lastRequestUrl(mock: ReturnType<typeof vi.fn>): URL {
+  const request = mock.mock.calls[mock.mock.calls.length - 1]?.[0] as string;
+  return new URL(request, "http://localhost");
 }
 
 function findButton(label: string, container: HTMLElement): HTMLButtonElement {
@@ -332,22 +266,25 @@ function findField(label: string, container: HTMLElement): HTMLElement {
 }
 
 function changeInput(input: HTMLInputElement, value: string) {
-  const descriptor = Object.getOwnPropertyDescriptor(
-    HTMLInputElement.prototype,
-    "value",
-  );
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value");
   descriptor?.set?.call(input, value);
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
 function changeSelect(select: HTMLSelectElement, value: string) {
-  const descriptor = Object.getOwnPropertyDescriptor(
-    HTMLSelectElement.prototype,
-    "value",
-  );
+  const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
   descriptor?.set?.call(select, value);
   select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function indexOfText(container: HTMLElement, text: string): number {
+  const content = container.textContent ?? "";
+  const index = content.indexOf(text);
+  if (index === -1) {
+    throw new Error(`Could not find text: ${text}`);
+  }
+  return index;
 }
 
 function jsonResponse(payload: unknown) {
@@ -356,6 +293,280 @@ function jsonResponse(payload: unknown) {
     status: 200,
     statusText: "OK",
     json: async () => payload,
+  };
+}
+
+function buildOverviewPayload(url: URL) {
+  const searchQuery = url.searchParams.get("search_query");
+  const filteredMatchCount = searchQuery === "hotel" ? 3 : 8;
+
+  return {
+    atlas_run: buildAtlasRun(),
+    regions: [
+      buildRegion({
+        region_key: "region-travel",
+        title: "Travel Planning",
+        x: -200,
+        y: 30,
+        overlay: { match_count: filteredMatchCount },
+        top_apps: ["telegram", "gmail"],
+        top_labels: ["travel planning", "itinerary"],
+        top_entities: ["topic:trip-to-berlin"],
+      }),
+      buildRegion({
+        region_key: "region-finance",
+        title: "Finance Review",
+        x: 220,
+        y: -40,
+        overlay: { match_count: searchQuery === "hotel" ? 0 : 2 },
+        top_apps: ["slack"],
+        top_labels: ["budget review"],
+        top_entities: ["topic:month-end-close"],
+      }),
+    ],
+    edges: [
+      {
+        source_region_key: "region-travel",
+        target_region_key: "region-finance",
+        weight: 0.36,
+        edge_type: "bridge",
+      },
+    ],
+    active_filters: buildActiveFilters(url),
+  };
+}
+
+function buildRegionDetailPayload(url: URL) {
+  const searchQuery = url.searchParams.get("search_query");
+
+  return {
+    atlas_run: buildAtlasRun(),
+    region: buildRegion({
+      region_key: "region-travel",
+      title: "Travel Planning",
+      overlay: { match_count: searchQuery === "hotel" ? 3 : 8 },
+      top_apps: ["telegram", "gmail"],
+      top_labels: ["travel planning", "itinerary"],
+      top_entities: ["topic:trip-to-berlin"],
+    }),
+    subregions: [
+      buildRegion({
+        region_key: "region-travel/subregion-1",
+        parent_region_key: "region-travel",
+        level: 1,
+        title: "Trip booking lane",
+        x: -110,
+        y: -20,
+        overlay: { match_count: searchQuery === "hotel" ? 1 : 5 },
+        top_labels: ["arrival logistics"],
+        top_apps: ["maps"],
+        top_entities: ["task:plan-arrival"],
+      }),
+      buildRegion({
+        region_key: "region-travel/subregion-2",
+        parent_region_key: "region-travel",
+        level: 1,
+        title: "Packing lane",
+        x: 120,
+        y: 35,
+        overlay: { match_count: searchQuery === "hotel" ? 0 : 3 },
+        top_labels: ["packing"],
+        top_apps: ["notes"],
+        top_entities: ["task:review-final-checklist"],
+      }),
+    ],
+    representatives:
+      searchQuery === "hotel"
+        ? [
+            buildItem({
+              source_item_id: 111,
+              region_key: "region-travel",
+              semantic_summary: "Hotel confirmation thread",
+              app_hint: "Telegram",
+              is_representative: true,
+              representative_rank: 1,
+            }),
+          ]
+        : [
+            buildItem({
+              source_item_id: 101,
+              region_key: "region-travel",
+              semantic_summary: "Trip research in Telegram",
+              app_hint: "Telegram",
+              is_representative: true,
+              representative_rank: 1,
+            }),
+            buildItem({
+              source_item_id: 102,
+              region_key: "region-travel",
+              semantic_summary: "Museum itinerary notes",
+              app_hint: "Telegram",
+              is_representative: true,
+              representative_rank: 2,
+            }),
+          ],
+    active_filters: buildActiveFilters(url),
+  };
+}
+
+function buildEvidencePayload(url: URL) {
+  const sort = url.searchParams.get("sort") ?? "observed_at_desc";
+  const searchQuery = url.searchParams.get("search_query");
+
+  if (searchQuery === "hotel") {
+    return {
+      atlas_run: buildAtlasRun(),
+      region_key: "region-travel",
+      subregion_key: url.searchParams.get("subregion_key"),
+      sort,
+      representatives: [
+        buildItem({
+          source_item_id: 111,
+          region_key: "region-travel",
+          subregion_key: "region-travel/subregion-1",
+          semantic_summary: "Hotel confirmation thread",
+          app_hint: "Telegram",
+          is_representative: true,
+          representative_rank: 1,
+        }),
+      ],
+      bridges: [],
+      long_tail_page: {
+        items: [
+          buildItem({
+            source_item_id: 333,
+            region_key: "region-travel",
+            subregion_key: "region-travel/subregion-1",
+            semantic_summary: "Hotel shortlist screenshot",
+            app_hint: "Browser",
+          }),
+        ],
+        limit: 1,
+        offset: 0,
+        total: 8,
+      },
+      section_totals: {
+        representatives: 1,
+        bridges: 0,
+        long_tail: 8,
+      },
+      active_filters: buildActiveFilters(url),
+    };
+  }
+
+  return {
+    atlas_run: buildAtlasRun(),
+    region_key: "region-travel",
+    subregion_key: url.searchParams.get("subregion_key"),
+    sort,
+    representatives: [
+      buildItem({
+        source_item_id: 101,
+        region_key: "region-travel",
+        subregion_key: "region-travel/subregion-1",
+        semantic_summary: "Trip research in Telegram",
+        app_hint: "Telegram",
+        is_representative: true,
+        representative_rank: 1,
+      }),
+    ],
+    bridges: [
+      buildItem({
+        source_item_id: 202,
+        region_key: "region-travel",
+        subregion_key: "region-travel/subregion-1",
+        semantic_summary: "Budget handoff to finance notes",
+        app_hint: "Sheets",
+        is_bridge: true,
+        bridge_type: "cross-region",
+      }),
+    ],
+    long_tail_page: {
+      items: buildLongTailItems(sort),
+      limit: 25,
+      offset: 0,
+      total: 4,
+    },
+    section_totals: {
+      representatives: 1,
+      bridges: 1,
+      long_tail: 4,
+    },
+    active_filters: buildActiveFilters(url),
+  };
+}
+
+function buildLongTailItems(sort: string) {
+  switch (sort) {
+    case "app_hint_asc":
+      return [
+        buildItem({
+          source_item_id: 307,
+          semantic_summary: "Browser booking confirmation",
+          app_hint: "Browser",
+        }),
+        buildItem({
+          source_item_id: 306,
+          semantic_summary: "Calendar departure reminder",
+          app_hint: "Calendar",
+        }),
+      ];
+    case "semantic_summary_asc":
+      return [
+        buildItem({
+          source_item_id: 307,
+          semantic_summary: "Browser booking confirmation",
+          app_hint: "Browser",
+        }),
+        buildItem({
+          source_item_id: 306,
+          semantic_summary: "Calendar departure reminder",
+          app_hint: "Calendar",
+        }),
+      ];
+    case "observed_at_asc":
+      return [
+        buildItem({
+          source_item_id: 305,
+          semantic_summary: "Email itinerary checkpoint",
+          app_hint: "Gmail",
+          observed_at: "2026-03-01T09:00:00Z",
+        }),
+        buildItem({
+          source_item_id: 306,
+          semantic_summary: "Calendar departure reminder",
+          app_hint: "Calendar",
+          observed_at: "2026-03-02T09:00:00Z",
+        }),
+      ];
+    default:
+      return [
+        buildItem({
+          source_item_id: 308,
+          semantic_summary: "Notes packing checklist",
+          app_hint: "Notes",
+          observed_at: "2026-03-08T09:00:00Z",
+        }),
+        buildItem({
+          source_item_id: 307,
+          semantic_summary: "Browser booking confirmation",
+          app_hint: "Browser",
+          observed_at: "2026-03-07T09:00:00Z",
+        }),
+      ];
+  }
+}
+
+function buildActiveFilters(url: URL) {
+  return {
+    app_hint: url.searchParams.get("app_hint"),
+    observed_from: url.searchParams.get("observed_from"),
+    observed_to: url.searchParams.get("observed_to"),
+    has_knowledge:
+      url.searchParams.get("has_knowledge") === null
+        ? null
+        : url.searchParams.get("has_knowledge") === "true",
+    search_query: url.searchParams.get("search_query"),
   };
 }
 
@@ -421,14 +632,14 @@ function buildRegion(overrides: Record<string, unknown>) {
 function buildItem(overrides: Record<string, unknown>) {
   return {
     source_item_id: 1,
-    region_key: "region-default",
-    subregion_key: null,
+    region_key: "region-travel",
+    subregion_key: "region-travel/subregion-1",
     x: 0,
     y: 0,
     semantic_summary: "Atlas evidence item",
     app_hint: "Telegram",
     observed_at: "2026-03-05T10:00:00Z",
-    object_refs: [],
+    object_refs: ["topic:trip-to-berlin"],
     is_representative: false,
     representative_rank: null,
     is_bridge: false,

@@ -1,4 +1,4 @@
-import type { AtlasItem, AtlasRegion } from "../api/contracts";
+import type { AtlasEvidenceSort, AtlasItem, AtlasRegion } from "../api/contracts";
 import type { EvidenceSections } from "../lib/evidenceSections";
 import type { AtlasLevel } from "../state/atlasReducer";
 import { EvidenceList } from "./EvidenceList";
@@ -8,11 +8,15 @@ type InsightDockProps = {
   loading: boolean;
   visibleRegions: AtlasRegion[];
   selectedRegion: AtlasRegion | null;
+  activeFocusRegion: AtlasRegion | null;
   visibleSubregions: AtlasRegion[];
   selectedSubregion: AtlasRegion | null;
   selectedItem: AtlasItem | null;
   regionRepresentatives: AtlasItem[];
+  regionDetailLoaded: boolean;
   evidenceSections: EvidenceSections<AtlasItem> | null;
+  evidenceSort: AtlasEvidenceSort;
+  onEvidenceSortChange: (sort: AtlasEvidenceSort) => void;
   onSelectRegion: (regionKey: string) => void;
   onDrillRegion: () => void;
   onSelectSubregion: (subregionKey: string) => void;
@@ -29,11 +33,15 @@ export function InsightDock({
   loading,
   visibleRegions,
   selectedRegion,
+  activeFocusRegion,
   visibleSubregions,
   selectedSubregion,
   selectedItem,
   regionRepresentatives,
+  regionDetailLoaded,
   evidenceSections,
+  evidenceSort,
+  onEvidenceSortChange,
   onSelectRegion,
   onDrillRegion,
   onSelectSubregion,
@@ -44,21 +52,20 @@ export function InsightDock({
   canPreviousEvidencePage,
   canNextEvidencePage,
 }: InsightDockProps) {
+  const dockTitle =
+    selectedSubregion?.title ??
+    selectedRegion?.title ??
+    "Atlas overview";
+
   return (
     <aside className="insight-dock">
       <div className="insight-dock__hero">
         <p className="insight-dock__eyebrow">Workbench</p>
-        <h2>
-          {level === "overview"
-            ? "Atlas overview"
-            : level === "region"
-              ? selectedRegion?.title ?? "Region focus"
-              : selectedSubregion?.title ?? "Evidence focus"}
-        </h2>
+        <h2>{dockTitle}</h2>
         <p>
           {loading
             ? "Refreshing the active view."
-            : "Selection details, facets, and drill actions stay pinned here while the atlas remains visible."}
+            : "Selection details, representative evidence, and drill actions stay pinned here while the atlas remains visible."}
         </p>
       </div>
 
@@ -66,21 +73,25 @@ export function InsightDock({
         <header className="dock-panel__header">
           <h3>Focus summary</h3>
         </header>
-        {selectedRegion !== null ? (
+        {activeFocusRegion !== null ? (
           <div className="focus-summary">
-            <strong>{selectedRegion.title}</strong>
-            <span>{selectedRegion.overlay.match_count} matching screenshots</span>
-            <span>{selectedRegion.item_count} screenshots in region</span>
-            <span>{selectedRegion.top_labels.slice(0, 2).join(" · ") || "No top labels yet"}</span>
+            <strong>{activeFocusRegion.title}</strong>
+            <span>{activeFocusRegion.overlay.match_count} matching screenshots</span>
+            <span>{activeFocusRegion.item_count} screenshots in scope</span>
+            <span>
+              {activeFocusRegion.top_labels.slice(0, 2).join(" · ") || "No top labels yet"}
+            </span>
           </div>
         ) : (
-          <p className="dock-empty">Select a region to inspect its themes before drilling deeper.</p>
+          <p className="dock-empty">Select a region to open the atlas workbench.</p>
         )}
       </section>
 
       <section className="dock-panel">
         <header className="dock-panel__header">
-          <h3>{level === "overview" ? "Regions" : "Subregions"}</h3>
+          <h3>
+            {level === "overview" && regionDetailLoaded ? "Region lanes" : level === "overview" ? "Regions" : "Subregions"}
+          </h3>
           {level === "overview" ? (
             <button
               type="button"
@@ -102,7 +113,20 @@ export function InsightDock({
           )}
         </header>
 
-        {level === "overview" ? (
+        {level === "overview" && regionDetailLoaded ? (
+          visibleSubregions.length > 0 ? (
+            <ul className="dock-list">
+              {visibleSubregions.map((subregion) => (
+                <li key={subregion.region_key} className="dock-list__row">
+                  <strong className="dock-list__preview-title">{subregion.title}</strong>
+                  <span>{subregion.overlay.match_count} matching screenshots</span>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="dock-empty">No subregions match the current atlas request.</p>
+          )
+        ) : level === "overview" ? (
           <ul className="dock-list">
             {visibleRegions.map((region) => (
               <li key={region.region_key} className="dock-list__row">
@@ -141,37 +165,60 @@ export function InsightDock({
         )}
       </section>
 
-      {level === "region" ? (
+      {selectedRegion !== null && regionDetailLoaded ? (
         <section className="dock-panel">
           <header className="dock-panel__header">
-            <h3>Representative screenshots</h3>
+            <h3>
+              {regionRepresentatives.length} representative screenshot
+              {regionRepresentatives.length === 1 ? "" : "s"}
+            </h3>
           </header>
-          <ul className="dock-representatives">
-            {regionRepresentatives.map((item) => (
-              <li key={item.source_item_id}>
-                <button
-                  type="button"
-                  className={`dock-representatives__button ${
-                    item.source_item_id === selectedItem?.source_item_id
-                      ? "dock-representatives__button--selected"
-                      : ""
-                  }`}
-                  onClick={() => onSelectItem(item.source_item_id)}
-                >
-                  <span>#{item.source_item_id}</span>
-                  <strong>{item.semantic_summary ?? "Untitled evidence"}</strong>
-                  <span>{item.app_hint ?? "Unknown app"}</span>
-                </button>
-              </li>
-            ))}
-          </ul>
+          {regionRepresentatives.length > 0 ? (
+            <ul className="dock-representatives">
+              {regionRepresentatives.map((item) => (
+                <li key={item.source_item_id}>
+                  <button
+                    type="button"
+                    className={`dock-representatives__button ${
+                      item.source_item_id === selectedItem?.source_item_id
+                        ? "dock-representatives__button--selected"
+                        : ""
+                    }`}
+                    onClick={() => onSelectItem(item.source_item_id)}
+                  >
+                    <span>#{item.source_item_id}</span>
+                    <strong>{item.semantic_summary ?? "Untitled evidence"}</strong>
+                    <span>{item.app_hint ?? "Unknown app"}</span>
+                  </button>
+                </li>
+              ))}
+            </ul>
+          ) : (
+            <p className="dock-empty">No representative evidence matches the current request.</p>
+          )}
         </section>
       ) : null}
 
       {level === "evidence" && evidenceSections !== null ? (
         <section className="dock-panel dock-panel--evidence">
-          <header className="dock-panel__header">
-            <h3>Evidence stack</h3>
+          <header className="dock-panel__header dock-panel__header--stacked">
+            <div>
+              <h3>Evidence stack</h3>
+            </div>
+            <label className="dock-sort">
+              <span>Evidence order</span>
+              <select
+                value={evidenceSort}
+                onChange={(event) =>
+                  onEvidenceSortChange(event.currentTarget.value as AtlasEvidenceSort)
+                }
+              >
+                <option value="observed_at_desc">Newest first</option>
+                <option value="observed_at_asc">Oldest first</option>
+                <option value="app_hint_asc">App</option>
+                <option value="semantic_summary_asc">Title / summary</option>
+              </select>
+            </label>
           </header>
           <EvidenceList
             sections={evidenceSections}
@@ -190,9 +237,9 @@ export function InsightDock({
           <h3>Facets</h3>
         </header>
         <div className="facet-grid">
-          <Facet label="Labels" values={selectedRegion?.top_labels ?? []} />
-          <Facet label="Apps" values={selectedRegion?.top_apps ?? []} />
-          <Facet label="Entities" values={selectedRegion?.top_entities ?? []} />
+          <Facet label="Labels" values={activeFocusRegion?.top_labels ?? []} />
+          <Facet label="Apps" values={activeFocusRegion?.top_apps ?? []} />
+          <Facet label="Entities" values={activeFocusRegion?.top_entities ?? []} />
         </div>
       </section>
 

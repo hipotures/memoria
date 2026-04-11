@@ -295,6 +295,7 @@ class ScreenshotReadFiltersResponse(BaseModel):
     has_knowledge: bool | None
     observed_from: datetime | None
     observed_to: datetime | None
+    search_query: str | None
 
 
 class AtlasRunResponse(BaseModel):

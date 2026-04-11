@@ -1,7 +1,8 @@
-import { useDeferredValue, useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useState } from "react";
 
 import type {
   AtlasEvidenceSliceResponse,
+  AtlasEvidenceSort,
   AtlasFilters,
   AtlasItem,
   AtlasOverviewResponse,
@@ -33,12 +34,15 @@ const INITIAL_TOOLBAR_DRAFT: AtlasToolbarDraft = {
   knowledge: "all",
 };
 
+const DEFAULT_EVIDENCE_SORT: AtlasEvidenceSort = "observed_at_desc";
+
 export default function App() {
   const [atlasState, dispatch] = useReducer(atlasReducer, initialAtlasState);
   const [toolbarDraft, setToolbarDraft] = useState<AtlasToolbarDraft>(INITIAL_TOOLBAR_DRAFT);
   const [serverFilters, setServerFilters] = useState<AtlasFilters>(
     buildServerFilters(INITIAL_TOOLBAR_DRAFT),
   );
+  const [evidenceSort, setEvidenceSort] = useState<AtlasEvidenceSort>(DEFAULT_EVIDENCE_SORT);
   const [longTailOffset, setLongTailOffset] = useState(0);
 
   const [overviewData, setOverviewData] = useState<AtlasOverviewResponse | null>(null);
@@ -52,8 +56,6 @@ export default function App() {
   const [evidenceData, setEvidenceData] = useState<AtlasEvidenceSliceResponse | null>(null);
   const [evidenceState, setEvidenceState] = useState<LoadState>("idle");
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
-
-  const deferredSearchText = useDeferredValue(toolbarDraft.searchText.trim());
 
   useEffect(() => {
     let cancelled = false;
@@ -81,17 +83,14 @@ export default function App() {
     };
   }, [serverFilters]);
 
+  const regionDetailMatchesSelection =
+    atlasState.selectedRegionKey !== null &&
+    regionDetail !== null &&
+    regionDetail.region.region_key === atlasState.selectedRegionKey &&
+    sameFilters(regionDetail.active_filters, serverFilters);
+
   useEffect(() => {
-    if (atlasState.level === "overview" || atlasState.selectedRegionKey === null) {
-      return;
-    }
-
-    const filtersAlreadyApplied =
-      regionDetail !== null &&
-      regionDetail.region.region_key === atlasState.selectedRegionKey &&
-      sameFilters(regionDetail.active_filters, serverFilters);
-
-    if (filtersAlreadyApplied) {
+    if (atlasState.selectedRegionKey === null || regionDetailMatchesSelection) {
       return;
     }
 
@@ -118,7 +117,7 @@ export default function App() {
     return () => {
       cancelled = true;
     };
-  }, [atlasState.level, atlasState.selectedRegionKey, regionDetail, serverFilters]);
+  }, [atlasState.selectedRegionKey, regionDetailMatchesSelection, serverFilters]);
 
   useEffect(() => {
     if (
@@ -138,7 +137,7 @@ export default function App() {
       subregionKey: atlasState.selectedSubregionKey,
       limit: 25,
       offset: longTailOffset,
-      sort: "observed_at_desc",
+      sort: evidenceSort,
       ...serverFilters,
     })
       .then((response) => {
@@ -163,6 +162,7 @@ export default function App() {
     atlasState.level,
     atlasState.selectedRegionKey,
     atlasState.selectedSubregionKey,
+    evidenceSort,
     longTailOffset,
     serverFilters,
   ]);
@@ -176,16 +176,17 @@ export default function App() {
       (region) => region.region_key === atlasState.selectedRegionKey,
     );
     if (!regionStillVisible) {
-      dispatch({ type: "breadcrumbs.reset" });
       setRegionDetail(null);
       setEvidenceData(null);
+      setLongTailOffset(0);
+      dispatch({ type: "breadcrumbs.reset" });
     }
   }, [atlasState.selectedRegionKey, overviewData]);
 
   useEffect(() => {
     if (
       regionDetail === null ||
-      atlasState.level !== "evidence" ||
+      !regionDetailMatchesSelection ||
       atlasState.selectedSubregionKey === null
     ) {
       return;
@@ -195,46 +196,56 @@ export default function App() {
       (subregion) => subregion.region_key === atlasState.selectedSubregionKey,
     );
     if (!subregionStillVisible) {
-      dispatch({ type: "breadcrumbs.region" });
       setEvidenceData(null);
       setLongTailOffset(0);
+      dispatch({ type: "breadcrumbs.region" });
     }
-  }, [atlasState.level, atlasState.selectedSubregionKey, regionDetail]);
+  }, [
+    atlasState.selectedSubregionKey,
+    regionDetail,
+    regionDetailMatchesSelection,
+  ]);
+
+  const activeRegionDetail = regionDetailMatchesSelection ? regionDetail : null;
 
   const selectedRegion = useMemo(() => {
     if (atlasState.selectedRegionKey === null) {
       return null;
     }
 
-    if (regionDetail?.region.region_key === atlasState.selectedRegionKey) {
-      return regionDetail.region;
+    if (activeRegionDetail !== null) {
+      return activeRegionDetail.region;
     }
 
     return (
       overviewData?.regions.find((region) => region.region_key === atlasState.selectedRegionKey) ?? null
     );
-  }, [atlasState.selectedRegionKey, overviewData, regionDetail]);
+  }, [activeRegionDetail, atlasState.selectedRegionKey, overviewData]);
 
   const selectedSubregion = useMemo(() => {
-    if (atlasState.selectedSubregionKey === null) {
+    if (activeRegionDetail === null || atlasState.selectedSubregionKey === null) {
       return null;
     }
 
     return (
-      regionDetail?.subregions.find(
+      activeRegionDetail.subregions.find(
         (subregion) => subregion.region_key === atlasState.selectedSubregionKey,
       ) ?? null
     );
-  }, [atlasState.selectedSubregionKey, regionDetail]);
+  }, [activeRegionDetail, atlasState.selectedSubregionKey]);
+
+  const activeFocusRegion = selectedSubregion ?? selectedRegion;
+  const searchQuery = serverFilters.search_query?.trim() ?? "";
+  const backendFilteringActive = hasBackendFilters(serverFilters);
 
   const visibleRegions = useMemo(
     () =>
-      filterRegions(
+      applyOverlayFilter(
         overviewData?.regions ?? [],
-        deferredSearchText,
+        backendFilteringActive,
         atlasState.selectedRegionKey,
       ),
-    [atlasState.selectedRegionKey, deferredSearchText, overviewData],
+    [atlasState.selectedRegionKey, backendFilteringActive, overviewData],
   );
 
   const visibleOverviewEdges = useMemo(() => {
@@ -247,64 +258,16 @@ export default function App() {
 
   const visibleSubregions = useMemo(
     () =>
-      filterRegions(
-        regionDetail?.subregions ?? [],
-        deferredSearchText,
+      applyOverlayFilter(
+        activeRegionDetail?.subregions ?? [],
+        backendFilteringActive,
         atlasState.selectedSubregionKey,
       ),
-    [atlasState.selectedSubregionKey, deferredSearchText, regionDetail],
+    [activeRegionDetail, atlasState.selectedSubregionKey, backendFilteringActive],
   );
 
-  const visibleRegionRepresentatives = useMemo(
-    () =>
-      filterItems(
-        regionDetail?.representatives ?? [],
-        deferredSearchText,
-        atlasState.selectedItemId,
-      ),
-    [atlasState.selectedItemId, deferredSearchText, regionDetail],
-  );
-
-  const filteredEvidence = useMemo(() => {
-    if (evidenceData === null) {
-      return null;
-    }
-
-    const representatives = filterItems(
-      evidenceData.representatives,
-      deferredSearchText,
-      atlasState.selectedItemId,
-    );
-    const bridges = filterItems(
-      evidenceData.bridges,
-      deferredSearchText,
-      atlasState.selectedItemId,
-    );
-    const longTailItems = filterItems(
-      evidenceData.long_tail_page.items,
-      deferredSearchText,
-      atlasState.selectedItemId,
-    );
-
-    const searchActive = deferredSearchText.length > 0;
-
-    return splitEvidenceSections({
-      representatives,
-      bridges,
-      long_tail_page: {
-        ...evidenceData.long_tail_page,
-        items: longTailItems,
-        total: searchActive ? longTailItems.length : evidenceData.long_tail_page.total,
-      },
-      section_totals: searchActive
-        ? {
-            representatives: representatives.length,
-            bridges: bridges.length,
-            long_tail: longTailItems.length,
-          }
-        : evidenceData.section_totals,
-    });
-  }, [atlasState.selectedItemId, deferredSearchText, evidenceData]);
+  const regionRepresentatives = activeRegionDetail?.representatives ?? [];
+  const evidenceSections = evidenceData === null ? null : splitEvidenceSections(evidenceData);
 
   const selectedItem = useMemo(() => {
     const targetId = atlasState.selectedItemId;
@@ -312,36 +275,37 @@ export default function App() {
       return null;
     }
 
-    const candidates: AtlasItem[] = [];
-    candidates.push(...(regionDetail?.representatives ?? []));
-    candidates.push(...(evidenceData?.representatives ?? []));
-    candidates.push(...(evidenceData?.bridges ?? []));
-    candidates.push(...(evidenceData?.long_tail_page.items ?? []));
+    const candidates: AtlasItem[] = [
+      ...regionRepresentatives,
+      ...(evidenceData?.representatives ?? []),
+      ...(evidenceData?.bridges ?? []),
+      ...(evidenceData?.long_tail_page.items ?? []),
+    ];
 
     return candidates.find((item) => item.source_item_id === targetId) ?? null;
-  }, [atlasState.selectedItemId, evidenceData, regionDetail]);
+  }, [atlasState.selectedItemId, evidenceData, regionRepresentatives]);
 
   const visibleEvidenceItems = useMemo(() => {
-    if (filteredEvidence === null) {
+    if (evidenceSections === null) {
       return [];
     }
 
     return [
-      ...filteredEvidence.representatives,
-      ...filteredEvidence.bridges,
-      ...filteredEvidence.longTail.items,
+      ...evidenceSections.representatives,
+      ...evidenceSections.bridges,
+      ...evidenceSections.longTail.items,
     ];
-  }, [filteredEvidence]);
+  }, [evidenceSections]);
 
   const loading =
     overviewState === "loading" ||
-    regionState === "loading" ||
-    evidenceState === "loading";
+    (atlasState.selectedRegionKey !== null && regionState === "loading") ||
+    (atlasState.level === "evidence" && evidenceState === "loading");
 
   const currentError =
     atlasState.level === "evidence"
       ? evidenceError ?? regionError ?? overviewError
-      : atlasState.level === "region"
+      : atlasState.selectedRegionKey !== null
         ? regionError ?? overviewError
         : overviewError;
 
@@ -352,8 +316,8 @@ export default function App() {
     };
 
     pushRegionApps(overviewData?.regions ?? []);
-    pushRegionApps(regionDetail?.subregions ?? []);
-    selectedRegion?.top_apps.forEach((app) => values.add(app));
+    pushRegionApps(activeRegionDetail?.subregions ?? []);
+    activeFocusRegion?.top_apps.forEach((app) => values.add(app));
     visibleEvidenceItems.forEach((item) => {
       if (item.app_hint !== null) {
         values.add(item.app_hint);
@@ -361,13 +325,12 @@ export default function App() {
     });
 
     return Array.from(values).sort((left, right) => left.localeCompare(right));
-  }, [overviewData, regionDetail, selectedRegion, visibleEvidenceItems]);
+  }, [activeFocusRegion, activeRegionDetail, overviewData, visibleEvidenceItems]);
 
   const emptyFilteredState =
     overviewState === "ready" &&
     overviewData?.atlas_run !== null &&
-    visibleRegions.length === 0 &&
-    atlasState.level === "overview";
+    visibleRegions.length === 0;
 
   const handleDraftChange = (patch: Partial<AtlasToolbarDraft>) => {
     setToolbarDraft((current) => ({ ...current, ...patch }));
@@ -385,9 +348,9 @@ export default function App() {
   };
 
   const handleSelectRegion = (regionKey: string) => {
-    dispatch({ type: "region.selected", regionKey });
-    setEvidenceData(null);
     setLongTailOffset(0);
+    setEvidenceData(null);
+    dispatch({ type: "region.selected", regionKey });
   };
 
   const handleDrillRegion = (regionKey?: string) => {
@@ -399,9 +362,9 @@ export default function App() {
   };
 
   const handleSelectSubregion = (subregionKey: string) => {
-    dispatch({ type: "subregion.selected", subregionKey });
     setLongTailOffset(0);
     setEvidenceData(null);
+    dispatch({ type: "subregion.selected", subregionKey });
   };
 
   const handleDrillSubregion = (subregionKey?: string) => {
@@ -423,16 +386,19 @@ export default function App() {
 
   const handleResetAtlas = () => {
     setLongTailOffset(0);
+    setRegionDetail(null);
     setEvidenceData(null);
     dispatch({ type: "breadcrumbs.reset" });
   };
 
+  const handleEvidenceSortChange = (sort: AtlasEvidenceSort) => {
+    setLongTailOffset(0);
+    setEvidenceSort(sort);
+  };
+
   const canPreviousEvidencePage =
-    deferredSearchText.length === 0 &&
-    evidenceData !== null &&
-    evidenceData.long_tail_page.offset > 0;
+    evidenceData !== null && evidenceData.long_tail_page.offset > 0;
   const canNextEvidencePage =
-    deferredSearchText.length === 0 &&
     evidenceData !== null &&
     evidenceData.long_tail_page.offset + evidenceData.long_tail_page.limit <
       evidenceData.long_tail_page.total;
@@ -471,9 +437,11 @@ export default function App() {
                 {overviewData?.atlas_run?.embedding_model ?? "awaiting data"}
               </span>
               <span>
-                {selectedRegion !== null
-                  ? selectedRegion.top_labels.slice(0, 2).join(" · ") || "No topical labels"
-                  : "Select a region to inspect its contours"}
+                {searchQuery.length > 0
+                  ? `Search: ${searchQuery}`
+                  : selectedRegion !== null
+                    ? selectedRegion.top_labels.slice(0, 2).join(" · ") || "No topical labels"
+                    : "Select a region to inspect its contours"}
               </span>
             </div>
 
@@ -500,7 +468,7 @@ export default function App() {
 
             {currentError === null &&
             overviewData?.atlas_run !== null &&
-            !(overviewState === "ready" && (overviewData?.regions.length ?? 0) === 0) &&
+            (overviewData?.regions.length ?? 0) > 0 &&
             !emptyFilteredState ? (
               <AtlasCanvas
                 level={atlasState.level}
@@ -527,11 +495,15 @@ export default function App() {
           loading={loading}
           visibleRegions={visibleRegions}
           selectedRegion={selectedRegion}
+          activeFocusRegion={activeFocusRegion}
           visibleSubregions={visibleSubregions}
           selectedSubregion={selectedSubregion}
           selectedItem={selectedItem}
-          regionRepresentatives={visibleRegionRepresentatives}
-          evidenceSections={filteredEvidence}
+          regionRepresentatives={regionRepresentatives}
+          regionDetailLoaded={activeRegionDetail !== null}
+          evidenceSections={evidenceSections}
+          evidenceSort={evidenceSort}
+          onEvidenceSortChange={handleEvidenceSortChange}
           onSelectRegion={handleSelectRegion}
           onDrillRegion={() => handleDrillRegion()}
           onSelectSubregion={handleSelectSubregion}
@@ -555,6 +527,7 @@ function buildServerFilters(draft: AtlasToolbarDraft): AtlasFilters {
     has_knowledge: draft.knowledge === "with" ? true : null,
     observed_from: draft.observedFrom ? toStartOfDayIso(draft.observedFrom) : null,
     observed_to: draft.observedTo ? toEndOfDayIso(draft.observedTo) : null,
+    search_query: draft.searchText.trim() || null,
   };
 }
 
@@ -568,54 +541,18 @@ function toEndOfDayIso(dateValue: string): string {
   return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999)).toISOString();
 }
 
-function filterRegions(
+function applyOverlayFilter(
   regions: AtlasRegion[],
-  searchText: string,
+  filteringActive: boolean,
   selectedKey: string | null,
 ): AtlasRegion[] {
-  if (searchText.length === 0) {
+  if (!filteringActive) {
     return regions;
   }
 
-  const query = searchText.toLowerCase();
-  return regions.filter((region) => {
-    if (region.region_key === selectedKey) {
-      return true;
-    }
-
-    return [
-      region.title,
-      ...region.top_labels,
-      ...region.top_apps,
-      ...region.top_entities,
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-  });
-}
-
-function filterItems(items: AtlasItem[], searchText: string, selectedItemId: number | null): AtlasItem[] {
-  if (searchText.length === 0) {
-    return items;
-  }
-
-  const query = searchText.toLowerCase();
-  return items.filter((item) => {
-    if (item.source_item_id === selectedItemId) {
-      return true;
-    }
-
-    return [
-      item.semantic_summary ?? "",
-      item.app_hint ?? "",
-      ...item.object_refs,
-      String(item.source_item_id),
-    ]
-      .join(" ")
-      .toLowerCase()
-      .includes(query);
-  });
+  return regions.filter(
+    (region) => region.overlay.match_count > 0 || region.region_key === selectedKey,
+  );
 }
 
 function sameFilters(left: AtlasFilters, right: AtlasFilters): boolean {
@@ -625,6 +562,19 @@ function sameFilters(left: AtlasFilters, right: AtlasFilters): boolean {
     (left.observed_from ?? null) === (right.observed_from ?? null) &&
     (left.observed_to ?? null) === (right.observed_to ?? null) &&
     (left.connector_instance_id ?? null) === (right.connector_instance_id ?? null) &&
-    (left.screen_category ?? null) === (right.screen_category ?? null)
+    (left.screen_category ?? null) === (right.screen_category ?? null) &&
+    (left.search_query ?? null) === (right.search_query ?? null)
   );
+}
+
+function hasBackendFilters(filters: AtlasFilters): boolean {
+  return [
+    filters.connector_instance_id,
+    filters.app_hint,
+    filters.screen_category,
+    filters.observed_from,
+    filters.observed_to,
+    filters.search_query,
+    filters.has_knowledge,
+  ].some((value) => value !== null && value !== undefined && value !== "");
 }

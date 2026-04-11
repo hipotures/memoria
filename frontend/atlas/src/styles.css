@@ -434,6 +434,10 @@ a {
   gap: 12px;
 }
 
+.dock-panel__header--stacked {
+  align-items: flex-start;
+}
+
 .dock-panel__header h3 {
   margin: 0;
   font-size: 0.9rem;
@@ -467,6 +471,11 @@ a {
   gap: 4px;
 }
 
+.dock-list__preview-title {
+  color: var(--dock-text);
+  font-size: 1rem;
+}
+
 .dock-list__button,
 .dock-representatives__button {
   width: 100%;
@@ -494,6 +503,29 @@ a {
   padding: 10px 12px;
   border-radius: 18px;
   background: rgba(255, 255, 255, 0.04);
+}
+
+.dock-sort {
+  display: grid;
+  gap: 6px;
+  width: 100%;
+}
+
+.dock-sort span {
+  color: var(--dock-muted);
+  font-size: 0.78rem;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+}
+
+.dock-sort select {
+  min-height: 42px;
+  width: 100%;
+  border: 1px solid rgba(255, 255, 255, 0.14);
+  border-radius: 14px;
+  background: rgba(255, 255, 255, 0.06);
+  color: var(--dock-text);
+  padding: 0 12px;
 }
 
 .facet-grid {

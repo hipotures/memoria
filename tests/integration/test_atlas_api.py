@@ -58,6 +58,40 @@ def test_get_atlas_region_detail_returns_subregions_and_representatives(tmp_path
     assert all(item["app_hint"] == "telegram" for item in payload["representatives"])
 
 
+def test_get_atlas_overview_applies_search_query_to_region_overlays(tmp_path):
+    client, engine = create_test_client(tmp_path, "atlas-overview-search.db")
+    fixture = _seed_atlas_api_fixture(engine, tmp_path)
+
+    response = client.get("/atlas/overview", params={"search_query": "hotel"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_filters"]["search_query"] == "hotel"
+
+    target_region = next(
+        region for region in payload["regions"] if region["region_key"] == fixture.region_key
+    )
+    assert target_region["overlay"]["match_count"] == 3
+    assert any(region["overlay"]["match_count"] == 0 for region in payload["regions"])
+
+
+def test_get_atlas_region_detail_applies_search_query_to_representatives(tmp_path):
+    client, engine = create_test_client(tmp_path, "atlas-region-search.db")
+    fixture = _seed_atlas_api_fixture(engine, tmp_path)
+
+    response = client.get(
+        f"/atlas/regions/{fixture.region_key}",
+        params={"search_query": "itinerary"},
+    )
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_filters"]["search_query"] == "itinerary"
+    assert [item["source_item_id"] for item in payload["representatives"]] == [
+        fixture.representative_source_item_ids[1]
+    ]
+
+
 def test_get_atlas_evidence_slice_splits_representatives_bridges_and_long_tail(tmp_path):
     client, engine = create_test_client(tmp_path, "atlas-evidence.db")
     fixture = _seed_atlas_api_fixture(engine, tmp_path)
@@ -88,8 +122,62 @@ def test_get_atlas_evidence_slice_splits_representatives_bridges_and_long_tail(t
     assert bridge_ids.isdisjoint(long_tail_ids)
 
 
+def test_get_atlas_evidence_slice_supports_app_and_titleish_sorts(tmp_path):
+    client, engine = create_test_client(tmp_path, "atlas-evidence-sorts.db")
+    fixture = _seed_atlas_api_fixture(engine, tmp_path)
+
+    app_sort_response = client.get(
+        "/atlas/evidence",
+        params={
+            "region_key": fixture.region_key,
+            "sort": "app_hint_asc",
+            "limit": 4,
+            "offset": 0,
+        },
+    )
+    title_sort_response = client.get(
+        "/atlas/evidence",
+        params={
+            "region_key": fixture.region_key,
+            "sort": "semantic_summary_asc",
+            "limit": 4,
+            "offset": 0,
+        },
+    )
+
+    assert app_sort_response.status_code == 200
+    assert title_sort_response.status_code == 200
+
+    app_sort_payload = app_sort_response.json()
+    title_sort_payload = title_sort_response.json()
+
+    assert app_sort_payload["sort"] == "app_hint_asc"
+    assert [
+        item["source_item_id"] for item in app_sort_payload["long_tail_page"]["items"]
+    ] == [
+        fixture.long_tail_source_item_ids[2],
+        fixture.long_tail_source_item_ids[1],
+        fixture.long_tail_source_item_ids[0],
+        fixture.long_tail_source_item_ids[3],
+    ]
+
+    assert title_sort_payload["sort"] == "semantic_summary_asc"
+    assert [
+        item["source_item_id"] for item in title_sort_payload["long_tail_page"]["items"]
+    ] == [
+        fixture.long_tail_source_item_ids[2],
+        fixture.long_tail_source_item_ids[1],
+        fixture.long_tail_source_item_ids[0],
+        fixture.long_tail_source_item_ids[3],
+    ]
+
+
 def test_get_atlas_page_returns_fallback_html_when_frontend_build_is_missing(tmp_path):
-    client, engine = create_test_client(tmp_path, "atlas-page.db")
+    client, engine = create_test_client(
+        tmp_path,
+        "atlas-page.db",
+        frontend_dist_dir=tmp_path / "missing-atlas-dist",
+    )
     seed_atlas_dataset(engine, tmp_path, rebuild_atlas=True)
 
     response = client.get("/atlas")

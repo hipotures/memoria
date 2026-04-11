@@ -76,6 +76,7 @@ function atlasFilterParams(filters: AtlasFilters): Record<string, QueryValue> {
     has_knowledge: filters.has_knowledge,
     observed_from: filters.observed_from,
     observed_to: filters.observed_to,
+    search_query: filters.search_query,
   };
 }
 

@@ -7,7 +7,14 @@ export type AtlasFilters = {
   has_knowledge?: boolean | null;
   observed_from?: ISODateTimeString | null;
   observed_to?: ISODateTimeString | null;
+  search_query?: string | null;
 };
+
+export type AtlasEvidenceSort =
+  | "observed_at_desc"
+  | "observed_at_asc"
+  | "app_hint_asc"
+  | "semantic_summary_asc";
 
 export type AtlasRun = {
   atlas_run_id: number;
@@ -125,7 +132,7 @@ export type AtlasEvidenceSliceResponse = {
   atlas_run: AtlasRun;
   region_key: string;
   subregion_key: string | null;
-  sort: string;
+  sort: AtlasEvidenceSort;
   representatives: AtlasItem[];
   bridges: AtlasItem[];
   long_tail_page: AtlasItemPage;
@@ -136,7 +143,7 @@ export type AtlasEvidenceSliceResponse = {
 export type AtlasEvidenceQuery = AtlasFilters & {
   regionKey: string;
   subregionKey?: string | null;
-  sort?: string;
+  sort?: AtlasEvidenceSort;
   limit?: number;
   offset?: number;
 };
