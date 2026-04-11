@@ -19,6 +19,7 @@ from memoria.admin.service import ImportScreenshotsCommand
 from memoria.admin.service import diagnose_vision_failure
 from memoria.admin.service import discover_screenshot_files
 from memoria.admin.service import import_screenshots_from_directory
+from memoria.admin.service import rebuild_screenshot_atlas
 from memoria.admin.service import rebuild_screenshot_derived_data
 from memoria.admin.service import reconcile_pipeline_runs
 from memoria.runtime_engines import create_ocr_engine
@@ -38,6 +39,8 @@ def main(argv: list[str] | None = None) -> int:
     subparsers.add_parser("reconcile-pipeline-runs")
     rebuild_parser = subparsers.add_parser("rebuild-screenshot-derived-data")
     rebuild_parser.add_argument("--force", action="store_true")
+    atlas_rebuild_parser = subparsers.add_parser("rebuild-screenshot-atlas")
+    atlas_rebuild_parser.add_argument("--force", action="store_true")
 
     import_parser = subparsers.add_parser("import-screenshots")
     import_parser.add_argument("--input-dir", required=True, type=Path)
@@ -100,6 +103,9 @@ def main(argv: list[str] | None = None) -> int:
                 payload = diagnose_vision_failure(session, source_item_id=args.source_item_id)
             elif args.command == "reconcile-pipeline-runs":
                 payload = reconcile_pipeline_runs(session)
+                session.commit()
+            elif args.command == "rebuild-screenshot-atlas":
+                payload = rebuild_screenshot_atlas(session, force=args.force)
                 session.commit()
             else:
                 payload = rebuild_screenshot_derived_data(session, force=args.force)
