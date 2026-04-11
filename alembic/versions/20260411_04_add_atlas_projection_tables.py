@@ -120,6 +120,12 @@ def upgrade() -> None:
             name="fk_atlas_items_subregion",
             ondelete="CASCADE",
         ),
+        sa.ForeignKeyConstraint(
+            ["atlas_run_id", "secondary_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            name="fk_atlas_items_secondary_region",
+            ondelete="CASCADE",
+        ),
         sa.ForeignKeyConstraint(["source_item_id"], ["source_items.id"], ondelete="CASCADE"),
         sa.UniqueConstraint("atlas_run_id", "source_item_id", name="uq_atlas_item_identity"),
     )

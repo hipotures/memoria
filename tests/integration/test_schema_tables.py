@@ -190,6 +190,11 @@ def test_initial_schema_includes_screenshot_knowledge_core_tables(tmp_path):
         ("atlas_run_id", "region_key"),
     ) in atlas_item_foreign_keys
     assert (
+        ("atlas_run_id", "secondary_region_key"),
+        "atlas_regions",
+        ("atlas_run_id", "region_key"),
+    ) in atlas_item_foreign_keys
+    assert (
         ("atlas_run_id",),
         "atlas_runs",
         ("id",),

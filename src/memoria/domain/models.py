@@ -372,6 +372,12 @@ class AtlasItem(Base):
             ondelete="CASCADE",
             name="fk_atlas_items_subregion",
         ),
+        ForeignKeyConstraint(
+            ["atlas_run_id", "secondary_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_items_secondary_region",
+        ),
         UniqueConstraint("atlas_run_id", "source_item_id", name="uq_atlas_item_identity"),
     )
 
