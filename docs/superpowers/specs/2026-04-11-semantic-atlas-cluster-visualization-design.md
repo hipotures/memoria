@@ -63,9 +63,12 @@ This design does not include:
 The repository currently has:
 
 - a FastAPI screenshot product surface;
-- a semantic map read path with cluster summaries, cluster items, and per-point detail;
-- no dedicated frontend application shell for this atlas yet;
-- a simple HTML map page that proves the read path but is not an atlas UX.
+- a semantic map read path implemented in `src/memoria/map/service.py` and `src/memoria/api/map.py`;
+- current semantic map storage in `semantic_map_runs`, `semantic_clusters`, and `semantic_map_points`;
+- current map rebuild logic that creates `screenshots_semantic_v1` from persisted screenshot semantic embeddings;
+- a simple HTML map page that proves the read path but is not an atlas UX;
+- no dedicated atlas module, atlas projection tables, or atlas API surface yet;
+- no dedicated frontend application shell for this atlas yet, and no existing React/Vite/TypeScript app in the repository.
 
 This means the new work should be treated as a focused atlas product layered on top of the existing screenshot and semantic map capabilities, not as a replacement for the whole screenshots vertical slice.
 
@@ -325,6 +328,73 @@ The browser is responsible for:
 - highlighting and filtering already-projected data;
 - virtualized evidence browsing.
 
+### 10.1 Physical Location Of The Atlas Read Model
+
+For MVP, the atlas read model should live in two places:
+
+- code under `src/memoria/atlas/` for atlas projection build logic and atlas read services;
+- dedicated `atlas_*` tables in the same SQLite metadata database used by the rest of the product.
+
+Recommended code layout:
+
+- `src/memoria/atlas/service.py` for read APIs over atlas runs, regions, and evidence slices;
+- `src/memoria/atlas/projection.py` for atlas rebuild logic;
+- `src/memoria/api/atlas.py` for HTTP endpoints;
+- `src/memoria/api/schemas.py` for atlas response models.
+
+Recommended persistent tables:
+
+- `atlas_runs`
+- `atlas_regions`
+- `atlas_items`
+- `atlas_edges`
+
+The atlas read model should not be stored only as in-memory browser state or as ad hoc JSON blobs returned directly from the current semantic map service. It needs a dedicated, reproducible projection layer.
+
+### 10.2 MVP Rebuild Policy
+
+The MVP atlas rebuild policy should be explicit and batch-oriented.
+
+Rules:
+
+- no incremental atlas maintenance in the browser;
+- no atlas rebuild on every single screenshot pipeline completion;
+- no requirement that atlas rebuilds remain synchronous with each ingest;
+- rebuild creates a fresh atlas run and publishes it atomically by making the new run the latest completed run;
+- readers always consume the latest completed atlas run.
+
+Operational policy:
+
+- atlas rebuild should be exposed as a dedicated admin operation;
+- atlas rebuild should refuse to run by default while screenshot pipeline runs are active;
+- a force override may exist for operators, but it should not be the default path;
+- if no atlas run exists yet, the frontend should show an explicit empty state rather than attempting client-side reconstruction.
+
+This keeps MVP feasible and consistent with the existing repository preference for explicit rebuild flows around derived read models.
+
+### 10.3 Embedding Basis For MVP
+
+The MVP atlas should reuse the existing screenshot semantic embedding pipeline instead of introducing a second embedding source.
+
+Specifically:
+
+- `embedding_type = "screenshot_semantic_text"`
+- `embedding_model = "hashed-text-v1"`
+- dimension = `96`
+
+The embedding text is already constructed by `build_embedding_text_for_screenshot(...)` from:
+
+- original filename;
+- screen category;
+- semantic summary;
+- app hint;
+- searchable labels;
+- cluster hints;
+- entity mentions;
+- OCR text truncated to `1200` characters.
+
+This means the first atlas version is anchored to the same embedding basis already used by screenshot semantic search and the current semantic map. Future upgrades may replace the embedding model, but MVP should not split the semantic stack into multiple competing screenshot embeddings.
+
 ---
 
 ## 11. Heuristics
@@ -423,6 +493,28 @@ Matching signals across rebuilds:
 
 This stability is a product requirement, not just an implementation nice-to-have.
 
+### 11.6 Coordinate Contract
+
+Atlas coordinates should be emitted in a stable atlas world space, not in screen pixels.
+
+Rules:
+
+- all `x` and `y` values are world coordinates;
+- the origin is the atlas center: `(0, 0)`;
+- positive `x` moves right;
+- positive `y` moves down;
+- region centers, subregion centers, label anchors, item points, and region shapes all use the same coordinate space;
+- subregion and item coordinates are global atlas coordinates, not local coordinates relative to a parent;
+- filtering does not change stored coordinates, only visibility, highlighting, and counts.
+
+`region_shape` should use the same world-space contract and may encode:
+
+- a polygon;
+- a multipolygon;
+- one or more simplified contour rings.
+
+This contract allows stable animated transitions across levels because the browser does not need to reinterpret multiple coordinate systems.
+
 ---
 
 ## 12. Atlas Data Model
@@ -437,6 +529,7 @@ Fields:
 - `generated_at`
 - `source_count`
 - `layout_version`
+- `embedding_type`
 - `embedding_model`
 - `embedding_version`
 - `clustering_method`
@@ -555,10 +648,14 @@ Should contain:
 
 - `AtlasRun` metadata;
 - active region and subregion keys;
-- paginated `AtlasItem` records;
+- `representatives`: a bounded list of top representative `AtlasItem` records;
+- `bridges`: a bounded list of bridge `AtlasItem` records;
+- `long_tail_page`: paginated non-representative, non-bridge `AtlasItem` records;
 - sort metadata;
-- grouping metadata for representatives and bridges;
+- total counts for each section;
 - active filter echo.
+
+This split is intentional. Representatives, bridges, and the paginated long tail should not be flattened into one undifferentiated list in the API contract. `long_tail_page` should exclude items already surfaced in `representatives` or `bridges`.
 
 The API should share the same screenshot-oriented filter vocabulary across all atlas levels.
 
