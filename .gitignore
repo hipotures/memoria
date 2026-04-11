@@ -14,3 +14,7 @@ var/
 *.db-*
 *.sqlite
 *.sqlite*
+
+# Frontend atlas workspace outputs
+frontend/atlas/node_modules/
+frontend/atlas/dist/
