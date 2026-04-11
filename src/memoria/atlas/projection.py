@@ -11,10 +11,13 @@ from datetime import UTC
 from datetime import datetime
 from itertools import combinations
 from math import dist
+from struct import unpack
 from typing import Sequence
 
+from sqlalchemy import bindparam
 from sqlalchemy import func
 from sqlalchemy import select
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from memoria.atlas.contracts import AtlasCandidateItem
@@ -34,12 +37,9 @@ from memoria.domain.models import SemanticCluster
 from memoria.domain.models import SemanticMapPoint
 from memoria.domain.models import SemanticMapRun
 from memoria.domain.models import SourceItem
-from memoria.search.embeddings import EMBEDDING_MODEL_NAME
-from memoria.search.embeddings import embed_text
 
 ATLAS_KEY = "screenshots_atlas_v1"
 ATLAS_EMBEDDING_TYPE = "screenshot_semantic_text"
-ATLAS_EMBEDDING_VERSION = "96d-basis"
 ATLAS_CLUSTERING_METHOD = "semantic-map-plus-subregions-v1"
 ATLAS_LAYOUT_VERSION = "atlas-world-v1"
 ATLAS_RANDOM_SEED = 42
@@ -80,9 +80,21 @@ class _SemanticRegionSource:
     items: list[_AtlasPoint]
 
 
+@dataclass(frozen=True, slots=True)
+class _EmbeddingSnapshot:
+    source_item_id: int
+    embedding_type: str
+    model_name: str
+    dimension: int
+    vector: list[float]
+
+
 @dataclass(slots=True)
 class _LatestSemanticMapRun:
     map_run_id: int
+    embedding_type: str
+    embedding_model: str
+    embedding_version: str
     regions: list[_SemanticRegionSource]
     points_by_id: dict[int, _AtlasPoint]
 
@@ -285,9 +297,9 @@ def rebuild_screenshot_atlas(session: Session, *, force: bool = False) -> dict[s
         source_count=len(latest_map_run.source_item_ids),
         source_snapshot_id=f"semantic-map-run:{latest_map_run.map_run_id}",
         corpus_hash=_hash_source_ids(latest_map_run.source_item_ids),
-        embedding_type=ATLAS_EMBEDDING_TYPE,
-        embedding_model=EMBEDDING_MODEL_NAME,
-        embedding_version=ATLAS_EMBEDDING_VERSION,
+        embedding_type=latest_map_run.embedding_type,
+        embedding_model=latest_map_run.embedding_model,
+        embedding_version=latest_map_run.embedding_version,
         clustering_method=ATLAS_CLUSTERING_METHOD,
         clustering_params_json=json.dumps(
             {
@@ -347,19 +359,21 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
         session,
         source_item_ids=source_item_ids,
     )
+    embedding_snapshots = _load_embedding_snapshots(
+        session,
+        source_item_ids=source_item_ids,
+    )
+    embedding_type, embedding_model, embedding_version = _resolve_embedding_snapshot_metadata(
+        embedding_snapshots.values()
+    )
 
     points_by_id: dict[int, _AtlasPoint] = {}
     grouped_points: dict[str, list[_AtlasPoint]] = defaultdict(list)
     for point in map_points:
         interpretation = session.get(AssetInterpretation, point.source_item_id)
         source_item = session.get(SourceItem, point.source_item_id)
-        embedding = session.scalar(
-            select(Embedding).where(
-                Embedding.source_item_id == point.source_item_id,
-                Embedding.embedding_type == ATLAS_EMBEDDING_TYPE,
-            )
-        )
-        if interpretation is None or source_item is None or embedding is None or point.cluster_key is None:
+        embedding_snapshot = embedding_snapshots.get(point.source_item_id)
+        if interpretation is None or source_item is None or embedding_snapshot is None or point.cluster_key is None:
             continue
 
         atlas_point = _AtlasPoint(
@@ -367,7 +381,7 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
             cluster_key=point.cluster_key,
             x=point.x,
             y=point.y,
-            vector=embed_text(embedding.content_text),
+            vector=embedding_snapshot.vector,
             semantic_summary=interpretation.semantic_summary,
             app_hint=interpretation.app_hint,
             observed_at=source_item.source_observed_at or source_item.source_created_at,
@@ -398,6 +412,9 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
 
     return _LatestSemanticMapRun(
         map_run_id=map_run.id,
+        embedding_type=embedding_type,
+        embedding_model=embedding_model,
+        embedding_version=embedding_version,
         regions=[region for region in regions if region.items],
         points_by_id=points_by_id,
     )
@@ -828,25 +845,124 @@ def _classify_point_bridge(
     primary_region_key: str,
     region_centroids: dict[str, list[float]],
 ) -> BridgeClassification | None:
-    distances = sorted(
+    primary_centroid = region_centroids.get(primary_region_key)
+    if primary_centroid is None:
+        return None
+
+    secondary_candidates = sorted(
         (
             (1.0 - _cosine_similarity(point.vector, centroid), region_key)
             for region_key, centroid in region_centroids.items()
+            if region_key != primary_region_key
         ),
         key=lambda entry: (entry[0], entry[1]),
     )
-    if len(distances) < 2:
+    if not secondary_candidates:
         return None
 
-    primary_distance, resolved_primary_region_key = distances[0]
-    secondary_distance, secondary_region_key = distances[1]
+    primary_distance = 1.0 - _cosine_similarity(point.vector, primary_centroid)
+    secondary_distance, secondary_region_key = secondary_candidates[0]
     return classify_bridge(
-        primary_region_key=primary_region_key if primary_region_key == resolved_primary_region_key else resolved_primary_region_key,
+        primary_region_key=primary_region_key,
         secondary_region_key=secondary_region_key,
-        primary_distance=primary_distance,
-        secondary_distance=secondary_distance,
+        primary_distance=min(primary_distance, secondary_distance),
+        secondary_distance=max(primary_distance, secondary_distance),
         same_parent=False,
     )
+
+
+def _load_embedding_snapshots(
+    session: Session,
+    *,
+    source_item_ids: list[int],
+) -> dict[int, _EmbeddingSnapshot]:
+    if not source_item_ids:
+        return {}
+
+    embedding_rows = session.scalars(
+        select(Embedding)
+        .where(
+            Embedding.source_item_id.in_(source_item_ids),
+            Embedding.embedding_type == ATLAS_EMBEDDING_TYPE,
+        )
+        .order_by(Embedding.source_item_id.asc(), Embedding.id.asc())
+    ).all()
+    if not embedding_rows:
+        raise RuntimeError("semantic map snapshot is missing persisted screenshot embeddings")
+
+    embedding_row_by_source_item_id: dict[int, Embedding] = {}
+    for embedding_row in embedding_rows:
+        if embedding_row.source_item_id is None or embedding_row.source_item_id in embedding_row_by_source_item_id:
+            continue
+        embedding_row_by_source_item_id[embedding_row.source_item_id] = embedding_row
+
+    missing_source_item_ids = sorted(set(source_item_ids) - set(embedding_row_by_source_item_id))
+    if missing_source_item_ids:
+        raise RuntimeError(
+            "semantic map snapshot is missing persisted screenshot embeddings for source items: "
+            + ", ".join(str(source_item_id) for source_item_id in missing_source_item_ids)
+        )
+
+    raw_vectors = session.execute(
+        text(
+            "select embedding_id, embedding "
+            "from embedding_vec_items "
+            "where embedding_id in :embedding_ids"
+        ).bindparams(bindparam("embedding_ids", expanding=True)),
+        {"embedding_ids": sorted(embedding_row.id for embedding_row in embedding_row_by_source_item_id.values())},
+    ).all()
+    raw_vector_by_embedding_id = {
+        int(embedding_id): bytes(raw_vector)
+        for embedding_id, raw_vector in raw_vectors
+    }
+
+    missing_vector_ids = sorted(
+        embedding_row.id
+        for embedding_row in embedding_row_by_source_item_id.values()
+        if embedding_row.id not in raw_vector_by_embedding_id
+    )
+    if missing_vector_ids:
+        raise RuntimeError(
+            "semantic map snapshot is missing persisted embedding vectors for embedding ids: "
+            + ", ".join(str(embedding_id) for embedding_id in missing_vector_ids)
+        )
+
+    snapshots: dict[int, _EmbeddingSnapshot] = {}
+    for source_item_id, embedding_row in embedding_row_by_source_item_id.items():
+        snapshots[source_item_id] = _EmbeddingSnapshot(
+            source_item_id=source_item_id,
+            embedding_type=embedding_row.embedding_type,
+            model_name=embedding_row.model_name,
+            dimension=embedding_row.dimension,
+            vector=_deserialize_float32_vector(
+                raw_vector_by_embedding_id[embedding_row.id],
+                dimension=embedding_row.dimension,
+            ),
+        )
+    return snapshots
+
+
+def _resolve_embedding_snapshot_metadata(
+    embedding_snapshots: Sequence[_EmbeddingSnapshot],
+) -> tuple[str, str, str]:
+    embedding_types = sorted({snapshot.embedding_type for snapshot in embedding_snapshots})
+    model_names = sorted({snapshot.model_name for snapshot in embedding_snapshots})
+    dimensions = sorted({snapshot.dimension for snapshot in embedding_snapshots})
+    if len(embedding_types) != 1 or len(model_names) != 1 or len(dimensions) != 1:
+        raise RuntimeError(
+            "semantic map snapshot embedding metadata is inconsistent across source items"
+        )
+    dimension = dimensions[0]
+    return embedding_types[0], model_names[0], _embedding_version_from_dimension(dimension)
+
+
+def _deserialize_float32_vector(raw_vector: bytes, *, dimension: int) -> list[float]:
+    expected_size = dimension * 4
+    if len(raw_vector) != expected_size:
+        raise RuntimeError(
+            f"persisted embedding vector size {len(raw_vector)} does not match dimension {dimension}"
+        )
+    return list(unpack(f"{dimension}f", raw_vector))
 
 
 def _build_region_shape(
@@ -992,6 +1108,10 @@ def _representatives_payload(
 def _hash_source_ids(source_item_ids: list[int]) -> str:
     digest = hashlib.sha256(",".join(str(source_item_id) for source_item_id in sorted(source_item_ids)).encode("utf-8"))
     return digest.hexdigest()
+
+
+def _embedding_version_from_dimension(dimension: int) -> str:
+    return f"{dimension}d-basis"
 
 
 def _ordered_pair(left: str, right: str) -> tuple[str, str]:

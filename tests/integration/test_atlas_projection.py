@@ -98,3 +98,182 @@ def test_rebuild_screenshot_atlas_reuses_prior_region_keys_when_shape_is_stable(
         ).all()
 
     assert first_region_keys == second_region_keys
+
+
+def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
+    tmp_path, monkeypatch
+):
+    from memoria.atlas import projection
+    from memoria.domain.models import AtlasEdge
+    from memoria.domain.models import AtlasItem
+
+    engine = create_test_engine(tmp_path, "atlas-bridge-regression.db")
+    seeded = seed_atlas_dataset(engine, tmp_path)
+
+    def _atlas_point(
+        *,
+        source_item_id: int,
+        cluster_key: str,
+        x: float,
+        y: float,
+        vector: list[float],
+        semantic_summary: str,
+        app_hint: str,
+    ):
+        return projection._AtlasPoint(
+            source_item_id=source_item_id,
+            cluster_key=cluster_key,
+            x=x,
+            y=y,
+            vector=vector,
+            semantic_summary=semantic_summary,
+            app_hint=app_hint,
+            observed_at=None,
+            object_refs=[],
+            knowledge_count=0,
+            searchable_labels=[cluster_key],
+            cluster_hints=[cluster_key],
+        )
+
+    region_a_bridge_point = _atlas_point(
+        source_item_id=seeded.travel_source_item_ids[0],
+        cluster_key="cluster-a",
+        x=-12.0,
+        y=0.0,
+        vector=[1.0, 0.0],
+        semantic_summary="Bridge candidate assigned to cluster A.",
+        app_hint="telegram",
+    )
+    region_a_anchor_point = _atlas_point(
+        source_item_id=seeded.travel_source_item_ids[1],
+        cluster_key="cluster-a",
+        x=-18.0,
+        y=6.0,
+        vector=[0.8, 0.6],
+        semantic_summary="Anchor screenshot for cluster A.",
+        app_hint="telegram",
+    )
+    region_b_anchor_point = _atlas_point(
+        source_item_id=seeded.finance_source_item_ids[0],
+        cluster_key="cluster-b",
+        x=16.0,
+        y=0.0,
+        vector=[0.995, 0.1],
+        semantic_summary="Anchor screenshot for cluster B.",
+        app_hint="slack",
+    )
+
+    fake_map_run = projection._LatestSemanticMapRun(
+        map_run_id=seeded.semantic_map_run_id,
+        regions=[
+            projection._SemanticRegionSource(
+                cluster_key="cluster-a",
+                title="Cluster A",
+                x=-15.0,
+                y=0.0,
+                top_labels=["cluster-a"],
+                top_apps=["telegram"],
+                time_start=None,
+                time_end=None,
+                items=[region_a_bridge_point, region_a_anchor_point],
+            ),
+            projection._SemanticRegionSource(
+                cluster_key="cluster-b",
+                title="Cluster B",
+                x=15.0,
+                y=0.0,
+                top_labels=["cluster-b"],
+                top_apps=["slack"],
+                time_start=None,
+                time_end=None,
+                items=[region_b_anchor_point],
+            ),
+        ],
+        points_by_id={
+            region_a_bridge_point.source_item_id: region_a_bridge_point,
+            region_a_anchor_point.source_item_id: region_a_anchor_point,
+            region_b_anchor_point.source_item_id: region_b_anchor_point,
+        },
+        embedding_type="screenshot_semantic_text",
+        embedding_model="bridge-test-model",
+        embedding_version="2d-basis",
+    )
+
+    monkeypatch.setattr(projection, "_load_latest_semantic_map_run", lambda session: fake_map_run)
+    monkeypatch.setattr(
+        projection,
+        "_load_prior_region_identities",
+        lambda session, *, points_by_id: [],
+    )
+
+    with Session(engine) as session:
+        result = projection.rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+
+    with Session(engine) as session:
+        bridge_item = session.scalar(
+            select(AtlasItem).where(
+                AtlasItem.atlas_run_id == int(result["atlas_run_id"]),
+                AtlasItem.source_item_id == region_a_bridge_point.source_item_id,
+            )
+        )
+        bridge_edges = session.scalars(
+            select(AtlasEdge)
+            .where(
+                AtlasEdge.atlas_run_id == int(result["atlas_run_id"]),
+                AtlasEdge.edge_type == "semantic_bridge",
+            )
+            .order_by(AtlasEdge.source_region_key.asc(), AtlasEdge.target_region_key.asc())
+        ).all()
+
+    assert bridge_item is not None
+    assert bridge_item.region_key == "region-cluster-a"
+    assert bridge_item.secondary_region_key == "region-cluster-b"
+    assert bridge_item.is_bridge is True
+    assert bridge_edges
+    assert {(edge.source_region_key, edge.target_region_key) for edge in bridge_edges} == {
+        ("region-cluster-a", "region-cluster-b")
+    }
+
+
+def test_rebuild_screenshot_atlas_uses_persisted_embedding_snapshot_vectors_and_metadata(
+    tmp_path, monkeypatch
+):
+    from memoria.atlas import projection
+    from memoria.domain.models import AtlasRun
+    from memoria.domain.models import Embedding
+
+    engine = create_test_engine(tmp_path, "atlas-snapshot-metadata.db")
+    seeded = seed_atlas_dataset(engine, tmp_path)
+
+    with Session(engine) as session:
+        embedding_rows = session.scalars(
+            select(Embedding)
+            .where(Embedding.source_item_id.in_(seeded.source_item_ids))
+            .order_by(Embedding.id.asc())
+        ).all()
+        assert embedding_rows
+        for embedding_row in embedding_rows:
+            embedding_row.model_name = "snapshot-test-model"
+        session.commit()
+
+    monkeypatch.setattr(
+        projection,
+        "embed_text",
+        lambda _text: (_ for _ in ()).throw(
+            AssertionError("atlas rebuild must not recompute vectors with embed_text")
+        ),
+        raising=False,
+    )
+
+    with Session(engine) as session:
+        result = projection.rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+
+    with Session(engine) as session:
+        atlas_run = session.get(AtlasRun, int(result["atlas_run_id"]))
+
+    assert atlas_run is not None
+    assert atlas_run.embedding_type == "screenshot_semantic_text"
+    assert atlas_run.embedding_model == "snapshot-test-model"
+    assert atlas_run.embedding_version == "96d-basis"
