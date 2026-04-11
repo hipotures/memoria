@@ -79,6 +79,8 @@ class _SemanticRegionSource:
 @dataclass(slots=True)
 class _LatestSemanticMapRun:
     map_run_id: int
+    source_snapshot_id: str
+    corpus_hash: str
     embedding_type: str
     embedding_model: str
     embedding_version: str
@@ -282,8 +284,8 @@ def rebuild_screenshot_atlas(session: Session, *, force: bool = False) -> dict[s
         source_family="screenshot",
         status="completed",
         source_count=len(latest_map_run.source_item_ids),
-        source_snapshot_id=f"semantic-map-run:{latest_map_run.map_run_id}",
-        corpus_hash=_hash_source_ids(latest_map_run.source_item_ids),
+        source_snapshot_id=latest_map_run.source_snapshot_id,
+        corpus_hash=latest_map_run.corpus_hash,
         embedding_type=latest_map_run.embedding_type,
         embedding_model=latest_map_run.embedding_model,
         embedding_version=latest_map_run.embedding_version,
@@ -391,12 +393,24 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
             )
         )
 
-    return _LatestSemanticMapRun(
+    persisted_regions = [region for region in regions if region.items]
+    source_snapshot_id, corpus_hash = _atlas_input_snapshot_identity(
         map_run_id=map_run.id,
         embedding_type=embedding_type,
         embedding_model=embedding_model,
         embedding_version=embedding_version,
-        regions=[region for region in regions if region.items],
+        regions=persisted_regions,
+        points_by_id=points_by_id,
+    )
+
+    return _LatestSemanticMapRun(
+        map_run_id=map_run.id,
+        source_snapshot_id=source_snapshot_id,
+        corpus_hash=corpus_hash,
+        embedding_type=embedding_type,
+        embedding_model=embedding_model,
+        embedding_version=embedding_version,
+        regions=persisted_regions,
         points_by_id=points_by_id,
     )
 
@@ -1030,9 +1044,56 @@ def _representatives_payload(
     ]
 
 
-def _hash_source_ids(source_item_ids: list[int]) -> str:
-    digest = hashlib.sha256(",".join(str(source_item_id) for source_item_id in sorted(source_item_ids)).encode("utf-8"))
-    return digest.hexdigest()
+def _atlas_input_snapshot_identity(
+    *,
+    map_run_id: int,
+    embedding_type: str,
+    embedding_model: str,
+    embedding_version: str,
+    regions: list[_SemanticRegionSource],
+    points_by_id: dict[int, _AtlasPoint],
+) -> tuple[str, str]:
+    payload = {
+        "embedding_model": embedding_model,
+        "embedding_type": embedding_type,
+        "embedding_version": embedding_version,
+        "map_run_id": map_run_id,
+        "points": [
+            {
+                "app_hint": point.app_hint,
+                "cluster_hints": point.cluster_hints,
+                "cluster_key": point.cluster_key,
+                "knowledge_count": point.knowledge_count,
+                "object_refs": point.object_refs,
+                "observed_at": None if point.observed_at is None else point.observed_at.isoformat(),
+                "searchable_labels": point.searchable_labels,
+                "semantic_summary": point.semantic_summary,
+                "source_item_id": point.source_item_id,
+                "vector": point.vector,
+                "x": point.x,
+                "y": point.y,
+            }
+            for point in sorted(points_by_id.values(), key=lambda point: point.source_item_id)
+        ],
+        "regions": [
+            {
+                "cluster_key": region.cluster_key,
+                "item_source_item_ids": [item.source_item_id for item in sorted(region.items, key=lambda item: item.source_item_id)],
+                "time_end": None if region.time_end is None else region.time_end.isoformat(),
+                "time_start": None if region.time_start is None else region.time_start.isoformat(),
+                "title": region.title,
+                "top_apps": region.top_apps,
+                "top_labels": region.top_labels,
+                "x": region.x,
+                "y": region.y,
+            }
+            for region in sorted(regions, key=lambda region: region.cluster_key)
+        ],
+    }
+    corpus_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"atlas-input:semantic-map-run:{map_run_id}:{corpus_hash[:16]}", corpus_hash
 
 
 def _embedding_version_from_dimension(dimension: int) -> str:

@@ -49,7 +49,11 @@ def test_rebuild_screenshot_atlas_persists_latest_published_run(tmp_path):
 
     assert atlas_run.atlas_key == "screenshots_atlas_v1"
     assert atlas_run.source_family == "screenshot"
-    assert atlas_run.source_snapshot_id == f"semantic-map-run:{seeded.semantic_map_run_id}"
+    assert atlas_run.source_snapshot_id.startswith(
+        f"atlas-input:semantic-map-run:{seeded.semantic_map_run_id}:"
+    )
+    assert atlas_run.corpus_hash is not None
+    assert len(atlas_run.corpus_hash) == 64
     assert atlas_run.embedding_type == "screenshot_semantic_text"
     assert atlas_run.embedding_model == "hashed-text-v1"
     assert atlas_run.embedding_version == "96d-basis"
@@ -66,6 +70,7 @@ def test_rebuild_screenshot_atlas_persists_latest_published_run(tmp_path):
 
 def test_rebuild_screenshot_atlas_reuses_prior_region_keys_when_shape_is_stable(tmp_path):
     from memoria.atlas.projection import rebuild_screenshot_atlas
+    from memoria.domain.models import AtlasRun
     from memoria.domain.models import AtlasRegion
 
     engine = create_test_engine(tmp_path, "atlas-rebuild-stable.db")
@@ -74,12 +79,18 @@ def test_rebuild_screenshot_atlas_reuses_prior_region_keys_when_shape_is_stable(
     with Session(engine) as session:
         first = rebuild_screenshot_atlas(session, force=True)
         session.commit()
+        first_run = session.get(AtlasRun, int(first["atlas_run_id"]))
 
     with Session(engine) as session:
         second = rebuild_screenshot_atlas(session, force=True)
         session.commit()
+        second_run = session.get(AtlasRun, int(second["atlas_run_id"]))
 
     assert first["top_region_keys"] == second["top_region_keys"]
+    assert first_run is not None
+    assert second_run is not None
+    assert first_run.source_snapshot_id == second_run.source_snapshot_id
+    assert first_run.corpus_hash == second_run.corpus_hash
 
     with Session(engine) as session:
         first_region_keys = session.scalars(
@@ -167,6 +178,8 @@ def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
 
     fake_map_run = projection._LatestSemanticMapRun(
         map_run_id=seeded.semantic_map_run_id,
+        source_snapshot_id=f"atlas-input:semantic-map-run:{seeded.semantic_map_run_id}:bridgefixture",
+        corpus_hash="bridgefixture",
         regions=[
             projection._SemanticRegionSource(
                 cluster_key="cluster-a",
@@ -258,6 +271,7 @@ def test_rebuild_screenshot_atlas_uses_semantic_map_snapshot_metadata_when_embed
         semantic_map_run = session.scalar(select(SemanticMapRun).order_by(SemanticMapRun.id.desc()))
         assert semantic_map_run is not None
         semantic_map_config = json.loads(semantic_map_run.config_json)
+        first_run = session.get(AtlasRun, int(first["atlas_run_id"]))
         first_edges = {
             (edge.source_region_key, edge.target_region_key): edge.weight
             for edge in session.scalars(
@@ -274,6 +288,7 @@ def test_rebuild_screenshot_atlas_uses_semantic_map_snapshot_metadata_when_embed
     assert semantic_map_config["embedding_model"] == "hashed-text-v1"
     assert semantic_map_config["embedding_version"] == "96d-basis"
     assert semantic_map_config["embedding_dimension"] == 96
+    assert first_run is not None
 
     with Session(engine) as session:
         embedding_rows = session.scalars(
@@ -312,4 +327,50 @@ def test_rebuild_screenshot_atlas_uses_semantic_map_snapshot_metadata_when_embed
     assert atlas_run.embedding_type == "screenshot_semantic_text"
     assert atlas_run.embedding_model == "hashed-text-v1"
     assert atlas_run.embedding_version == "96d-basis"
+    assert atlas_run.source_snapshot_id == first_run.source_snapshot_id
+    assert atlas_run.corpus_hash == first_run.corpus_hash
     assert second_edges == first_edges
+
+
+def test_rebuild_screenshot_atlas_changes_snapshot_identity_when_live_metadata_changes(tmp_path):
+    from memoria.atlas import projection
+    from memoria.domain.models import AssetInterpretation
+    from memoria.domain.models import AtlasItem
+    from memoria.domain.models import AtlasRun
+
+    engine = create_test_engine(tmp_path, "atlas-live-provenance.db")
+    seeded = seed_atlas_dataset(engine, tmp_path)
+    mutated_source_item_id = seeded.travel_source_item_ids[0]
+
+    with Session(engine) as session:
+        first = projection.rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+        first_run = session.get(AtlasRun, int(first["atlas_run_id"]))
+
+    assert first_run is not None
+
+    with Session(engine) as session:
+        interpretation = session.get(AssetInterpretation, mutated_source_item_id)
+        assert interpretation is not None
+        interpretation.semantic_summary = "Updated after the map snapshot but before atlas rebuild."
+        session.commit()
+
+    with Session(engine) as session:
+        second = projection.rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+        second_run = session.get(AtlasRun, int(second["atlas_run_id"]))
+        mutated_item = session.scalar(
+            select(AtlasItem).where(
+                AtlasItem.atlas_run_id == int(second["atlas_run_id"]),
+                AtlasItem.source_item_id == mutated_source_item_id,
+            )
+        )
+
+    assert second_run is not None
+    assert mutated_item is not None
+    assert second_run.source_snapshot_id.startswith(
+        f"atlas-input:semantic-map-run:{seeded.semantic_map_run_id}:"
+    )
+    assert second_run.source_snapshot_id != first_run.source_snapshot_id
+    assert second_run.corpus_hash != first_run.corpus_hash
+    assert mutated_item.semantic_summary == "Updated after the map snapshot but before atlas rebuild."
