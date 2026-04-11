@@ -27,8 +27,9 @@ describe("App", () => {
     container.remove();
   });
 
-  it("keeps subregion controls disabled until a region is active", () => {
+  it("keeps subregion controls disabled until region focus is entered", () => {
     const selectRegionButton = findButton("Select region", container);
+    const drillRegionButton = findButton("Drill region", container);
     const selectSubregionButton = findButton("Select subregion", container);
     const drillEvidenceButton = findButton("Drill evidence", container);
 
@@ -37,6 +38,13 @@ describe("App", () => {
 
     act(() => {
       selectRegionButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    expect(selectSubregionButton.disabled).toBe(true);
+    expect(drillEvidenceButton.disabled).toBe(true);
+
+    act(() => {
+      drillRegionButton.dispatchEvent(new MouseEvent("click", { bubbles: true }));
     });
 
     expect(selectSubregionButton.disabled).toBe(false);

@@ -60,4 +60,29 @@ describe("atlasReducer", () => {
     expect(selected).toEqual(initialAtlasState);
     expect(drilled).toEqual(initialAtlasState);
   });
+
+  it("rejects subregion actions until the reducer has entered region focus", () => {
+    const overviewSelection = atlasReducer(initialAtlasState, {
+      type: "region.selected",
+      regionKey: "region-a",
+    });
+
+    const subregionSelected = atlasReducer(overviewSelection, {
+      type: "subregion.selected",
+      subregionKey: "region-a/subregion-1",
+    });
+    const subregionDrilled = atlasReducer(overviewSelection, {
+      type: "subregion.drilled",
+      subregionKey: "region-a/subregion-1",
+    });
+
+    expect(overviewSelection).toEqual({
+      level: "overview",
+      selectedRegionKey: "region-a",
+      selectedSubregionKey: null,
+      selectedItemId: null,
+    });
+    expect(subregionSelected).toEqual(overviewSelection);
+    expect(subregionDrilled).toEqual(overviewSelection);
+  });
 });
