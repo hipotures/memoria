@@ -10,12 +10,12 @@ from sqlalchemy import or_
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from memoria.atlas.filters import AtlasFilters
 from memoria.atlas.projection import ATLAS_KEY
 from memoria.domain.models import AtlasEdge
 from memoria.domain.models import AtlasItem
 from memoria.domain.models import AtlasRegion
 from memoria.domain.models import AtlasRun
-from memoria.screenshots.read.filters import ScreenshotReadFilters
 
 _SECTION_LIMIT = 6
 _EMPTY_REGION_SHAPE = {"shape_type": "polygon", "rings": []}
@@ -132,7 +132,7 @@ class AtlasOverview:
     atlas_run: AtlasRunView | None
     regions: list[AtlasRegionView]
     edges: list[AtlasEdgeView]
-    active_filters: ScreenshotReadFilters
+    active_filters: AtlasFilters
 
 
 @dataclass(frozen=True, slots=True)
@@ -141,7 +141,7 @@ class AtlasRegionDetail:
     region: AtlasRegionView
     subregions: list[AtlasRegionView]
     representatives: list[AtlasItemView]
-    active_filters: ScreenshotReadFilters
+    active_filters: AtlasFilters
 
 
 @dataclass(frozen=True, slots=True)
@@ -154,13 +154,13 @@ class AtlasEvidenceSlice:
     bridges: list[AtlasItemView]
     long_tail_page: AtlasItemPage
     section_totals: AtlasEvidenceSectionTotals
-    active_filters: ScreenshotReadFilters
+    active_filters: AtlasFilters
 
 
 def get_atlas_overview(
     session: Session,
     *,
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
 ) -> AtlasOverview:
     atlas_run = _get_latest_published_run(session)
     if atlas_run is None:
@@ -191,7 +191,7 @@ def get_atlas_region_detail(
     session: Session,
     *,
     region_key: str,
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
 ) -> AtlasRegionDetail | None:
     atlas_run = _get_latest_published_run(session)
     if atlas_run is None:
@@ -245,7 +245,7 @@ def get_atlas_evidence_slice(
     sort: str,
     limit: int,
     offset: int,
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
 ) -> AtlasEvidenceSlice | None:
     atlas_run = _get_latest_published_run(session)
     if atlas_run is None:
@@ -430,7 +430,7 @@ def _build_region_overlays(
     session: Session,
     *,
     atlas_run_id: int,
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
     group_by: str,
     region_key: str | None = None,
 ) -> dict[str, AtlasOverlay]:
@@ -499,7 +499,7 @@ def _load_items_for_source_item_ids(
     region_key: str,
     subregion_key: str | None,
     source_item_ids: list[int],
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
     limit: int | None = None,
 ) -> list[AtlasItemView]:
     if not source_item_ids:
@@ -540,7 +540,7 @@ def _load_items(
     atlas_run_id: int,
     region_key: str,
     subregion_key: str | None,
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
     bridge_only: bool = False,
     long_tail_only: bool = False,
     exclude_source_item_ids: set[int] | None = None,
@@ -568,7 +568,7 @@ def _count_items(
     atlas_run_id: int,
     region_key: str,
     subregion_key: str | None,
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
     bridge_only: bool = False,
     long_tail_only: bool = False,
     exclude_source_item_ids: set[int] | None = None,
@@ -592,7 +592,7 @@ def _count_items_for_source_item_ids(
     region_key: str,
     subregion_key: str | None,
     source_item_ids: list[int],
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
 ) -> int:
     if not source_item_ids:
         return 0
@@ -611,7 +611,7 @@ def _base_item_query(
     atlas_run_id: int,
     region_key: str,
     subregion_key: str | None,
-    filters: ScreenshotReadFilters,
+    filters: AtlasFilters,
     source_item_ids: list[int] | None = None,
     bridge_only: bool = False,
     long_tail_only: bool = False,
@@ -840,13 +840,13 @@ def _item_order(sort: str):
     )
 
 
-def _apply_atlas_filters(query, filters: ScreenshotReadFilters):
+def _apply_atlas_filters(query, filters: AtlasFilters):
     for clause in _build_atlas_filter_clauses(filters):
         query = query.where(clause)
     return query
 
 
-def _build_atlas_filter_clauses(filters: ScreenshotReadFilters) -> list[object]:
+def _build_atlas_filter_clauses(filters: AtlasFilters) -> list[object]:
     clauses: list[object] = []
     if filters.connector_instance_id is not None:
         clauses.append(AtlasItem.connector_instance_id == filters.connector_instance_id)

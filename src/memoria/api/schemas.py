@@ -295,6 +295,15 @@ class ScreenshotReadFiltersResponse(BaseModel):
     has_knowledge: bool | None
     observed_from: datetime | None
     observed_to: datetime | None
+
+
+class AtlasFiltersResponse(BaseModel):
+    connector_instance_id: str | None
+    app_hint: str | None
+    screen_category: str | None
+    has_knowledge: bool | None
+    observed_from: datetime | None
+    observed_to: datetime | None
     search_query: str | None
 
 
@@ -399,7 +408,7 @@ class AtlasOverviewResponse(BaseModel):
     atlas_run: AtlasRunResponse | None
     regions: list[AtlasRegionResponse]
     edges: list[AtlasEdgeResponse]
-    active_filters: ScreenshotReadFiltersResponse
+    active_filters: AtlasFiltersResponse
 
 
 class AtlasRegionDetailResponse(BaseModel):
@@ -407,7 +416,7 @@ class AtlasRegionDetailResponse(BaseModel):
     region: AtlasRegionResponse
     subregions: list[AtlasRegionResponse]
     representatives: list[AtlasItemResponse]
-    active_filters: ScreenshotReadFiltersResponse
+    active_filters: AtlasFiltersResponse
 
 
 class AtlasEvidenceSliceResponse(BaseModel):
@@ -419,4 +428,4 @@ class AtlasEvidenceSliceResponse(BaseModel):
     bridges: list[AtlasItemResponse]
     long_tail_page: AtlasItemPageResponse
     section_totals: AtlasEvidenceSectionTotalsResponse
-    active_filters: ScreenshotReadFiltersResponse
+    active_filters: AtlasFiltersResponse

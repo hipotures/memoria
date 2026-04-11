@@ -4,6 +4,11 @@ import { scaleLinear } from "d3-scale";
 
 import type { AtlasEdge, AtlasItem, AtlasRegion } from "../api/contracts";
 import type { AtlasLevel } from "../state/atlasReducer";
+import {
+  atlasRegionDisplayCount,
+  atlasRegionDisplayDomainMax,
+  atlasRegionDisplayLabel,
+} from "./displayCounts";
 
 type AtlasCanvasProps = {
   level: AtlasLevel;
@@ -222,7 +227,7 @@ function drawScene(
   const bounds = sceneBounds(scene);
   const transform = createTransform(bounds, width, height, 56);
   const overlayScale = scaleLinear()
-    .domain([0, maxOverlay(scene.regions)])
+    .domain([0, atlasRegionDisplayDomainMax(scene.regions)])
     .range([0.32, 0.84]);
   const itemScale = scaleLinear()
     .domain([0, maxBridgeScore(scene.evidenceItems)])
@@ -260,7 +265,7 @@ function drawScene(
       scene.level === "overview"
         ? scene.selectedRegionKey === region.region_key
         : scene.selectedSubregionKey === region.region_key;
-    const alpha = overlayScale(region.overlay.match_count || region.item_count || 0);
+    const alpha = overlayScale(atlasRegionDisplayCount(region));
     const graphics = new Graphics();
     graphics.eventMode = "static";
     graphics.cursor = "pointer";
@@ -316,7 +321,7 @@ function drawScene(
     mapLayer.addChild(title);
 
     const countLabel = new Text({
-      text: `${region.overlay.match_count || region.item_count} items`,
+      text: atlasRegionDisplayLabel(region),
       style: secondaryLabelStyle,
     });
     countLabel.anchor.set(0.5);
@@ -439,13 +444,6 @@ function createTransform(bounds: Bounds, width: number, height: number, padding:
     x: offsetX + (x - bounds.minX) * scale,
     y: height - (offsetY + (y - bounds.minY) * scale),
   });
-}
-
-function maxOverlay(regions: AtlasRegion[]): number {
-  return Math.max(
-    1,
-    ...regions.map((region) => Math.max(region.overlay.match_count, region.item_count)),
-  );
 }
 
 function maxBridgeScore(items: AtlasItem[]): number {

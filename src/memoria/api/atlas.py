@@ -16,8 +16,8 @@ from sqlalchemy.orm import Session
 from memoria.api.schemas import AtlasEvidenceSliceResponse
 from memoria.api.schemas import AtlasOverviewResponse
 from memoria.api.schemas import AtlasRegionDetailResponse
+from memoria.atlas.filters import AtlasFilters
 from memoria.atlas import service as atlas_service
-from memoria.screenshots.read.filters import ScreenshotReadFilters
 
 
 def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter:
@@ -145,8 +145,8 @@ def _atlas_filters(
     observed_from: datetime | None,
     observed_to: datetime | None,
     search_query: str | None,
-) -> ScreenshotReadFilters:
-    return ScreenshotReadFilters(
+) -> AtlasFilters:
+    return AtlasFilters(
         connector_instance_id=connector_instance_id,
         app_hint=app_hint,
         screen_category=screen_category,
