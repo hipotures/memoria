@@ -38,6 +38,7 @@ def create_app(
     *,
     database_url: str | None = None,
     blob_dir: Path,
+    atlas_frontend_dist_dir: Path | None = None,
     runtime_settings: RuntimeSettings | None = None,
     ocr_engine: OcrEngine | None = None,
     vision_engine: VisionEngine | None = None,
@@ -56,7 +57,7 @@ def create_app(
     app.include_router(
         create_atlas_router(
             engine=engine,
-            frontend_dist_dir=project_root / "frontend/atlas/dist",
+            frontend_dist_dir=atlas_frontend_dist_dir or project_root / "frontend/atlas/dist",
         )
     )
 

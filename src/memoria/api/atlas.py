@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from dataclasses import asdict
 from datetime import datetime
 from pathlib import Path
@@ -7,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi import HTTPException
 from fastapi import Query
+from fastapi.responses import FileResponse
 from fastapi.responses import HTMLResponse
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -25,8 +27,16 @@ def create_atlas_router(*, engine: Engine, frontend_dist_dir: Path) -> APIRouter
     def get_atlas_page() -> str:
         index_path = frontend_dist_dir / "index.html"
         if index_path.exists():
-            return index_path.read_text(encoding="utf-8")
+            return _rewrite_frontend_asset_paths(index_path.read_text(encoding="utf-8"))
         return _atlas_fallback_html()
+
+    @router.get("/atlas/assets/{asset_path:path}")
+    def get_atlas_asset(asset_path: str):
+        asset_root = (frontend_dist_dir / "assets").resolve()
+        asset_file = (asset_root / asset_path).resolve()
+        if asset_root not in asset_file.parents or not asset_file.is_file():
+            raise HTTPException(status_code=404, detail="atlas asset not found")
+        return FileResponse(asset_file)
 
     @router.get("/atlas/overview", response_model=AtlasOverviewResponse)
     def get_atlas_overview_endpoint(
@@ -169,3 +179,18 @@ def _atlas_fallback_html() -> str:
     </main>
   </body>
 </html>"""
+
+
+def _rewrite_frontend_asset_paths(html: str) -> str:
+    def _replace(match: re.Match[str]) -> str:
+        attribute = match.group(1)
+        quote = match.group(2)
+        raw_path = match.group(3)
+        normalized = raw_path.removeprefix("./").removeprefix("/")
+        return f"{attribute}={quote}/atlas/{normalized}{quote}"
+
+    return re.sub(
+        r"""(src|href)=(["'])((?:/|\./)?assets/[^"']+)["']""",
+        _replace,
+        html,
+    )

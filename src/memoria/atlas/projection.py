@@ -56,6 +56,9 @@ class _AtlasPoint:
     vector: list[float]
     semantic_summary: str | None
     app_hint: str | None
+    connector_instance_id: str
+    screen_category: str
+    has_knowledge: bool
     observed_at: datetime | None
     object_refs: list[str]
     knowledge_count: int
@@ -129,6 +132,9 @@ class _AtlasItemDraft:
     y: float
     semantic_summary: str | None
     app_hint: str | None
+    connector_instance_id: str
+    screen_category: str
+    has_knowledge: bool
     observed_at: datetime | None
     object_refs: list[str]
     is_representative: bool
@@ -367,6 +373,9 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
             vector=_signal_vector(x=point.x, y=point.y, scale=signal_scale),
             semantic_summary=interpretation.semantic_summary,
             app_hint=interpretation.app_hint,
+            connector_instance_id=source_item.connector_instance_id,
+            screen_category=interpretation.screen_category,
+            has_knowledge=knowledge_counts_by_source_item_id.get(point.source_item_id, 0) > 0,
             observed_at=source_item.source_observed_at or source_item.source_created_at,
             object_refs=object_refs_by_source_item_id.get(point.source_item_id, []),
             knowledge_count=knowledge_counts_by_source_item_id.get(point.source_item_id, 0),
@@ -615,6 +624,9 @@ def _build_item_drafts(
                     y=item.y,
                     semantic_summary=item.semantic_summary,
                     app_hint=item.app_hint,
+                    connector_instance_id=item.connector_instance_id,
+                    screen_category=item.screen_category,
+                    has_knowledge=item.has_knowledge,
                     observed_at=item.observed_at,
                     object_refs=item.object_refs,
                     is_representative=representative_rank is not None,
@@ -766,6 +778,9 @@ def _persist_items(
                 y=item.y,
                 semantic_summary=item.semantic_summary,
                 app_hint=item.app_hint,
+                connector_instance_id=item.connector_instance_id,
+                screen_category=item.screen_category,
+                has_knowledge=item.has_knowledge,
                 observed_at=item.observed_at,
                 object_refs_json=json.dumps(item.object_refs, sort_keys=True),
                 is_representative=item.is_representative,
@@ -1063,9 +1078,12 @@ def _atlas_input_snapshot_identity(
                 "app_hint": point.app_hint,
                 "cluster_hints": point.cluster_hints,
                 "cluster_key": point.cluster_key,
+                "connector_instance_id": point.connector_instance_id,
+                "has_knowledge": point.has_knowledge,
                 "knowledge_count": point.knowledge_count,
                 "object_refs": point.object_refs,
                 "observed_at": None if point.observed_at is None else point.observed_at.isoformat(),
+                "screen_category": point.screen_category,
                 "searchable_labels": point.searchable_labels,
                 "semantic_summary": point.semantic_summary,
                 "source_item_id": point.source_item_id,

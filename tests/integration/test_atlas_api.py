@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import json
 from dataclasses import dataclass
+from pathlib import Path
 
+from sqlalchemy import delete
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -96,6 +98,75 @@ def test_get_atlas_page_returns_fallback_html_when_frontend_build_is_missing(tmp
     assert "text/html" in response.headers["content-type"]
     assert "Semantic Atlas frontend build is not present" in response.text
     assert "/atlas/overview" in response.text
+
+
+def test_atlas_filters_use_persisted_snapshot_fields_after_live_rows_change(tmp_path):
+    client, engine = create_test_client(tmp_path, "atlas-snapshot-filters.db")
+    fixture = _seed_atlas_api_fixture(engine, tmp_path)
+    _mutate_live_filter_inputs(
+        engine,
+        source_item_ids=(
+            *fixture.representative_source_item_ids,
+            *fixture.bridge_source_item_ids,
+            *fixture.long_tail_source_item_ids,
+        ),
+    )
+
+    app_hint_response = client.get("/atlas/overview", params={"app_hint": "telegram"})
+    connector_response = client.get("/atlas/overview", params={"connector_instance_id": "atlas-seed"})
+    knowledge_response = client.get("/atlas/overview", params={"has_knowledge": True})
+    screen_category_response = client.get(
+        "/atlas/evidence",
+        params={"region_key": fixture.region_key, "screen_category": "chat", "limit": 10, "offset": 0},
+    )
+
+    assert app_hint_response.status_code == 200
+    assert connector_response.status_code == 200
+    assert knowledge_response.status_code == 200
+    assert screen_category_response.status_code == 200
+
+    app_hint_payload = app_hint_response.json()
+    connector_payload = connector_response.json()
+    knowledge_payload = knowledge_response.json()
+    screen_category_payload = screen_category_response.json()
+
+    assert _region_overlay_match_count(app_hint_payload, fixture.region_key) == 2
+    assert _region_overlay_match_count(connector_payload, fixture.region_key) == 8
+    assert _region_overlay_match_count(knowledge_payload, fixture.region_key) == 4
+    assert {
+        item["source_item_id"] for item in screen_category_payload["representatives"]
+    } == set(fixture.representative_source_item_ids)
+    assert {
+        item["source_item_id"] for item in screen_category_payload["bridges"]
+    } == {fixture.bridge_source_item_ids[0]}
+    assert screen_category_payload["long_tail_page"]["total"] == 0
+
+
+def test_get_atlas_page_serves_built_frontend_and_bundle_assets(tmp_path):
+    frontend_dist_dir = _create_fake_frontend_dist(tmp_path)
+    client, engine = create_test_client(
+        tmp_path,
+        "atlas-built-page.db",
+        frontend_dist_dir=frontend_dist_dir,
+    )
+    seed_atlas_dataset(engine, tmp_path, rebuild_atlas=True)
+
+    page_response = client.get("/atlas")
+    script_response = client.get("/atlas/assets/app.js")
+    style_response = client.get("/atlas/assets/app.css")
+
+    assert page_response.status_code == 200
+    assert "Semantic Atlas frontend build is not present" not in page_response.text
+    assert "/atlas/assets/app.js" in page_response.text
+    assert "/atlas/assets/app.css" in page_response.text
+
+    assert script_response.status_code == 200
+    assert "text/javascript" in script_response.headers["content-type"]
+    assert "atlas bundle loaded" in script_response.text
+
+    assert style_response.status_code == 200
+    assert "text/css" in style_response.headers["content-type"]
+    assert "background" in style_response.text
 
 
 def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
@@ -322,3 +393,51 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
         bridge_source_item_ids=bridge_source_item_ids,
         long_tail_source_item_ids=long_tail_source_item_ids,
     )
+
+
+def _mutate_live_filter_inputs(engine, *, source_item_ids: tuple[int, ...]) -> None:
+    with Session(engine) as session:
+        from memoria.domain.models import AssetInterpretation
+        from memoria.domain.models import KnowledgeEvidenceLink
+        from memoria.domain.models import SourceItem
+
+        session.execute(
+            delete(KnowledgeEvidenceLink).where(KnowledgeEvidenceLink.source_item_id.in_(source_item_ids))
+        )
+        for source_item_id in source_item_ids:
+            source_item = session.get(SourceItem, source_item_id)
+            interpretation = session.get(AssetInterpretation, source_item_id)
+            assert source_item is not None
+            assert interpretation is not None
+            source_item.connector_instance_id = "live-mutated-connector"
+            interpretation.app_hint = "live-mutated-app"
+            interpretation.screen_category = "live-mutated-category"
+        session.commit()
+
+
+def _create_fake_frontend_dist(tmp_path: Path) -> Path:
+    frontend_dist_dir = tmp_path / "frontend-dist"
+    assets_dir = frontend_dist_dir / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    (frontend_dist_dir / "index.html").write_text(
+        """<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <link rel="stylesheet" href="/assets/app.css" />
+  </head>
+  <body>
+    <div id="root">Atlas frontend</div>
+    <script type="module" src="/assets/app.js"></script>
+  </body>
+</html>""",
+        encoding="utf-8",
+    )
+    (assets_dir / "app.js").write_text("console.log('atlas bundle loaded');", encoding="utf-8")
+    (assets_dir / "app.css").write_text("body { background: #f3efe4; }", encoding="utf-8")
+    return frontend_dist_dir
+
+
+def _region_overlay_match_count(payload: dict[str, object], region_key: str) -> int:
+    region = next(region for region in payload["regions"] if region["region_key"] == region_key)
+    return int(region["overlay"]["match_count"])

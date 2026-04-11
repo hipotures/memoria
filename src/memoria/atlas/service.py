@@ -14,9 +14,7 @@ from memoria.domain.models import AtlasEdge
 from memoria.domain.models import AtlasItem
 from memoria.domain.models import AtlasRegion
 from memoria.domain.models import AtlasRun
-from memoria.domain.models import SourceItem
 from memoria.screenshots.read.filters import ScreenshotReadFilters
-from memoria.screenshots.read.filters import build_screenshot_filter_clauses
 
 _SECTION_LIMIT = 6
 _EMPTY_REGION_SHAPE = {"shape_type": "polygon", "rings": []}
@@ -445,15 +443,13 @@ def _build_region_overlays(
     query = (
         select(group_column.label("group_key"), func.count(AtlasItem.id))
         .select_from(AtlasItem)
-        .join(SourceItem, SourceItem.id == AtlasItem.source_item_id)
         .where(AtlasItem.atlas_run_id == atlas_run_id)
     )
     if region_key is not None:
         query = query.where(AtlasItem.region_key == region_key)
     if group_by == "subregion":
         query = query.where(group_column.is_not(None))
-    for clause in build_screenshot_filter_clauses(filters):
-        query = query.where(clause)
+    query = _apply_atlas_filters(query, filters)
 
     rows = session.execute(query.group_by(group_column)).all()
     return {
@@ -622,7 +618,6 @@ def _base_item_query(
 ):
     query = (
         select(AtlasItem)
-        .join(SourceItem, SourceItem.id == AtlasItem.source_item_id)
         .where(
             AtlasItem.atlas_run_id == atlas_run_id,
             AtlasItem.region_key == region_key,
@@ -641,9 +636,7 @@ def _base_item_query(
         )
     if exclude_source_item_ids:
         query = query.where(AtlasItem.source_item_id.not_in(sorted(exclude_source_item_ids)))
-    for clause in build_screenshot_filter_clauses(filters):
-        query = query.where(clause)
-    return query
+    return _apply_atlas_filters(query, filters)
 
 
 def _representative_source_item_ids(region_row: AtlasRegion) -> list[int]:
@@ -828,3 +821,28 @@ def _item_order(sort: str):
         AtlasItem.observed_at.desc(),
         AtlasItem.source_item_id.desc(),
     )
+
+
+def _apply_atlas_filters(query, filters: ScreenshotReadFilters):
+    for clause in _build_atlas_filter_clauses(filters):
+        query = query.where(clause)
+    return query
+
+
+def _build_atlas_filter_clauses(filters: ScreenshotReadFilters) -> list[object]:
+    clauses: list[object] = []
+    if filters.connector_instance_id is not None:
+        clauses.append(AtlasItem.connector_instance_id == filters.connector_instance_id)
+    if filters.app_hint is not None:
+        clauses.append(AtlasItem.app_hint == filters.app_hint)
+    if filters.screen_category is not None:
+        clauses.append(AtlasItem.screen_category == filters.screen_category)
+    if filters.has_knowledge is True:
+        clauses.append(AtlasItem.has_knowledge.is_(True))
+    elif filters.has_knowledge is False:
+        clauses.append(AtlasItem.has_knowledge.is_(False))
+    if filters.observed_from is not None:
+        clauses.append(AtlasItem.observed_at >= filters.observed_from)
+    if filters.observed_to is not None:
+        clauses.append(AtlasItem.observed_at <= filters.observed_to)
+    return clauses

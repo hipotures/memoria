@@ -87,13 +87,19 @@ def create_test_engine(tmp_path: Path, database_name: str):
     return create_engine_with_sqlite_pragmas(f"sqlite:///{database_path}")
 
 
-def create_test_client(tmp_path: Path, database_name: str):
+def create_test_client(
+    tmp_path: Path,
+    database_name: str,
+    *,
+    frontend_dist_dir: Path | None = None,
+):
     from memoria.api.app import create_app
 
     engine = create_test_engine(tmp_path, database_name)
     app = create_app(
         database_url=f"sqlite:///{tmp_path / database_name}",
         blob_dir=tmp_path / "blobs",
+        atlas_frontend_dist_dir=frontend_dist_dir,
         ocr_engine=_UnusedOcrEngine(),
         vision_engine=_UnusedVisionEngine(),
     )

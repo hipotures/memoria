@@ -66,6 +66,10 @@ def test_rebuild_screenshot_atlas_persists_latest_published_run(tmp_path):
     assert any(item.is_representative for item in items)
     assert any(item.is_bridge for item in items) or any(edge.edge_type == "semantic_similarity" for edge in edges)
     assert all(item.screenshot_detail_url == f"/screenshots/{item.source_item_id}" for item in items)
+    assert all(item.connector_instance_id == "atlas-seed" for item in items)
+    assert any(item.screen_category == "chat" for item in items)
+    assert any(item.has_knowledge for item in items)
+    assert any(not item.has_knowledge for item in items)
 
 
 def test_rebuild_screenshot_atlas_reuses_prior_region_keys_when_shape_is_stable(tmp_path):
@@ -141,6 +145,9 @@ def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
             vector=vector,
             semantic_summary=semantic_summary,
             app_hint=app_hint,
+            connector_instance_id="atlas-seed",
+            screen_category="chat",
+            has_knowledge=False,
             observed_at=None,
             object_refs=[],
             knowledge_count=0,
