@@ -8,6 +8,7 @@ from memoria.atlas.contracts import BridgeClassification
 from memoria.atlas.contracts import PriorRegionIdentity
 
 BRIDGE_MARGIN_THRESHOLD = 0.12
+BRIDGE_SECONDARY_DISTANCE_THRESHOLD = 1.0
 REGION_IDENTITY_OVERLAP_THRESHOLD = 0.6
 REGION_IDENTITY_CENTROID_THRESHOLD = 0.2
 
@@ -70,6 +71,9 @@ def classify_bridge(
 ) -> BridgeClassification | None:
     margin = secondary_distance - primary_distance
     if margin < 0.0 or margin > BRIDGE_MARGIN_THRESHOLD:
+        return None
+
+    if secondary_distance > BRIDGE_SECONDARY_DISTANCE_THRESHOLD:
         return None
 
     return BridgeClassification(

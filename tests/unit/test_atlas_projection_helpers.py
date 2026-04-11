@@ -90,6 +90,18 @@ def test_classify_bridge_returns_none_when_margin_is_too_large() -> None:
     assert classification is None
 
 
+def test_classify_bridge_returns_none_when_secondary_affinity_is_too_weak() -> None:
+    classification = classify_bridge(
+        primary_region_key="region-a",
+        secondary_region_key="region-b",
+        primary_distance=10.0,
+        secondary_distance=10.05,
+        same_parent=False,
+    )
+
+    assert classification is None
+
+
 def test_match_region_identity_reuses_prior_key_when_overlap_is_strong() -> None:
     matched = match_region_identity(
         prior_regions=[PriorRegionIdentity("atlas-r1", {1, 2, 3, 4}, [0.1, 0.2])],
