@@ -33,21 +33,15 @@ def select_representatives(
     if limit <= 0 or not items:
         return []
 
-    medoid_distances = {
-        item.source_item_id: sum(
-            _vector_distance(item.vector, other.vector)
-            for other in items
-            if other.source_item_id != item.source_item_id
-        )
-        for item in items
-    }
+    medoid_distances = _compute_medoid_distances(items)
 
     deduplicated_items = list(_select_best_duplicate_candidates(items, medoid_distances).values())
+    deduplicated_medoid_distances = _compute_medoid_distances(deduplicated_items)
 
     ordered = sorted(
         deduplicated_items,
         key=lambda item: (
-            medoid_distances[item.source_item_id],
+            deduplicated_medoid_distances[item.source_item_id],
             -item.metadata_score,
             item.source_item_id,
         ),
@@ -129,6 +123,17 @@ def match_region_identity(
 
 def _vector_distance(left: Sequence[float], right: Sequence[float]) -> float:
     return dist(left, right)
+
+
+def _compute_medoid_distances(items: list[AtlasCandidateItem]) -> dict[int, float]:
+    return {
+        item.source_item_id: sum(
+            _vector_distance(item.vector, other.vector)
+            for other in items
+            if other.source_item_id != item.source_item_id
+        )
+        for item in items
+    }
 
 
 def _select_best_duplicate_candidates(

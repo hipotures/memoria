@@ -65,6 +65,25 @@ def test_select_representatives_keeps_better_medoid_duplicate_over_metadata_rich
     assert 21 not in representative_ids
 
 
+def test_select_representatives_ranks_survivors_using_deduplicated_medoid_scores() -> None:
+    ranked = select_representatives(
+        [
+            AtlasCandidateItem(10, [0.0, 0.0], "left anchor", "telegram", ["thread:left"], 1),
+            AtlasCandidateItem(20, [1.0, 0.0], "true medoid", "telegram", ["thread:center"], 1),
+            AtlasCandidateItem(30, [3.0, 0.0], "duplicate cluster", "telegram", ["thread:right"], 1),
+            AtlasCandidateItem(31, [3.0, 0.0], "duplicate cluster", "telegram", ["thread:right"], 1),
+            AtlasCandidateItem(32, [3.0, 0.0], "duplicate cluster", "telegram", ["thread:right"], 1),
+            AtlasCandidateItem(33, [3.0, 0.0], "duplicate cluster", "telegram", ["thread:right"], 1),
+        ],
+        limit=3,
+    )
+
+    ranked_ids = [item.source_item_id for item in ranked]
+
+    assert ranked_ids[0] == 20
+    assert 30 in ranked_ids
+
+
 def test_classify_bridge_marks_small_primary_secondary_margin() -> None:
     classification = classify_bridge(
         primary_region_key="region-a",
