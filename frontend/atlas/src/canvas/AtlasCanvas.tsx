@@ -1,8 +1,9 @@
-import { useEffect, useMemo, useRef } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import type { MutableRefObject } from "react";
 import { scaleLinear } from "d3-scale";
 
 import type { AtlasEdge, AtlasItem, AtlasRegion } from "../api/contracts";
+import { formatAtlasDateRange, humanizeAtlasValue } from "../lib/atlasPresentation";
 import type { AtlasLevel } from "../state/atlasReducer";
 import {
   atlasRegionDisplayCount,
@@ -17,6 +18,11 @@ type AtlasCanvasProps = {
   focusRegion: AtlasRegion | null;
   subregions: AtlasRegion[];
   evidenceItems: AtlasItem[];
+  filteringActive: boolean;
+  stageNotice: {
+    title: string;
+    detail: string;
+  } | null;
   selectedRegionKey: string | null;
   selectedSubregionKey: string | null;
   selectedItemId: number | null;
@@ -41,6 +47,15 @@ type Bounds = {
 
 type PixiModule = typeof import("pixi.js");
 type PixiApplication = import("pixi.js").Application;
+type PixiPointerEvent = import("pixi.js").FederatedPointerEvent;
+
+type AtlasHoverCard = {
+  eyebrow: string;
+  title: string;
+  lines: string[];
+  x: number;
+  y: number;
+};
 
 const REGION_PALETTE = [
   { fill: 0xd8d0b7, stroke: 0x7b6a53, label: 0x152534 },
@@ -71,6 +86,8 @@ export function AtlasCanvas({
   focusRegion,
   subregions,
   evidenceItems,
+  filteringActive,
+  stageNotice,
   selectedRegionKey,
   selectedSubregionKey,
   selectedItemId,
@@ -84,6 +101,7 @@ export function AtlasCanvas({
   const appRef = useRef<PixiApplication | null>(null);
   const pixiRef = useRef<PixiModule | null>(null);
   const lastTapRef = useRef<{ key: string; at: number }>({ key: "", at: 0 });
+  const [hoverCard, setHoverCard] = useState<AtlasHoverCard | null>(null);
   const pixiEnabled = canUsePixi();
 
   const scene = useMemo(
@@ -92,6 +110,7 @@ export function AtlasCanvas({
       regions: level === "overview" ? overviewRegions : subregions,
       edges: level === "overview" ? overviewEdges : buildSubregionEdges(subregions),
       evidenceItems,
+      filteringActive,
       selectedRegionKey,
       selectedSubregionKey,
       selectedItemId,
@@ -99,6 +118,7 @@ export function AtlasCanvas({
     }),
     [
       evidenceItems,
+      filteringActive,
       focusRegion,
       level,
       overviewEdges,
@@ -135,6 +155,10 @@ export function AtlasCanvas({
       host.replaceChildren(app.canvas);
       pixiRef.current = pixi;
       appRef.current = app;
+      const handleLeave = () => {
+        setHoverCard(null);
+      };
+      app.canvas.addEventListener("pointerleave", handleLeave);
       drawScene(app, scene, {
         lastTapRef,
         onSelectRegion,
@@ -142,7 +166,12 @@ export function AtlasCanvas({
         onSelectSubregion,
         onDrillSubregion,
         onSelectItem,
+        onHoverChange: setHoverCard,
       }, pixi);
+
+      if (cancelled) {
+        app.canvas.removeEventListener("pointerleave", handleLeave);
+      }
     };
 
     void setup();
@@ -150,6 +179,7 @@ export function AtlasCanvas({
     return () => {
       cancelled = true;
       host.replaceChildren();
+      setHoverCard(null);
       appRef.current?.destroy({ removeView: true }, { children: true });
       appRef.current = null;
       pixiRef.current = null;
@@ -168,6 +198,7 @@ export function AtlasCanvas({
       onSelectSubregion,
       onDrillSubregion,
       onSelectItem,
+      onHoverChange: setHoverCard,
     }, pixiRef.current);
   }, [onDrillRegion, onDrillSubregion, onSelectItem, onSelectRegion, onSelectSubregion, pixiEnabled, scene]);
 
@@ -184,6 +215,24 @@ export function AtlasCanvas({
             </div>
           ) : null}
         </div>
+        {stageNotice !== null ? (
+          <div className="atlas-stage__notice" role="status" aria-live="polite">
+            <strong>{stageNotice.title}</strong>
+            <p>{stageNotice.detail}</p>
+          </div>
+        ) : null}
+        {hoverCard !== null ? (
+          <div
+            className="atlas-stage__hover-card"
+            style={{ left: `${hoverCard.x}px`, top: `${hoverCard.y}px` }}
+          >
+            <span>{hoverCard.eyebrow}</span>
+            <strong>{hoverCard.title}</strong>
+            {hoverCard.lines.map((line) => (
+              <p key={line}>{line}</p>
+            ))}
+          </div>
+        ) : null}
       </div>
     </section>
   );
@@ -199,6 +248,7 @@ function drawScene(
     onSelectSubregion: (subregionKey: string) => void;
     onDrillSubregion: (subregionKey: string) => void;
     onSelectItem: (sourceItemId: number) => void;
+    onHoverChange: (hoverCard: AtlasHoverCard | null) => void;
   },
   pixi: PixiModule,
 ) {
@@ -245,8 +295,15 @@ function drawScene(
 
     const source = transform(sourceRegion.x, sourceRegion.y);
     const target = transform(targetRegion.x, targetRegion.y);
+    const dimEdge =
+      scene.filteringActive &&
+      (atlasRegionDisplayCount(sourceRegion) === 0 || atlasRegionDisplayCount(targetRegion) === 0);
     const bridge = new Graphics();
-    bridge.lineStyle(1 + edge.weight * 2, 0x697a80, 0.25 + edge.weight * 0.25);
+    bridge.lineStyle(
+      dimEdge ? 1 : 1 + edge.weight * 2,
+      0x697a80,
+      dimEdge ? 0.08 : 0.25 + edge.weight * 0.25,
+    );
     bridge.moveTo(source.x, source.y);
     bridge.bezierCurveTo(
       source.x + (target.x - source.x) * 0.25,
@@ -265,14 +322,16 @@ function drawScene(
       scene.level === "overview"
         ? scene.selectedRegionKey === region.region_key
         : scene.selectedSubregionKey === region.region_key;
-    const alpha = overlayScale(atlasRegionDisplayCount(region));
+    const matchCount = atlasRegionDisplayCount(region);
+    const isDimmed = scene.filteringActive && matchCount === 0 && !isSelected;
+    const alpha = isDimmed ? 0.14 : Math.max(overlayScale(matchCount), isSelected ? 0.36 : 0.2);
     const graphics = new Graphics();
     graphics.eventMode = "static";
     graphics.cursor = "pointer";
 
     const rings = regionRings(region);
     if (rings.length > 0) {
-      graphics.lineStyle(isSelected ? 4 : 2, palette.stroke, isSelected ? 0.88 : 0.54);
+      graphics.lineStyle(isSelected ? 4 : 2, palette.stroke, isSelected ? 0.88 : isDimmed ? 0.22 : 0.54);
       graphics.beginFill(palette.fill, alpha);
       for (const ring of rings) {
         const points = ring.flatMap((point) => {
@@ -305,6 +364,10 @@ function drawScene(
         () => handlers.onDrillSubregion(region.region_key),
       );
     });
+    graphics.on("pointermove", (event: PixiPointerEvent) =>
+      handlers.onHoverChange(buildRegionHoverCard(region, scene.level, event, width, height)),
+    );
+    graphics.on("pointerout", () => handlers.onHoverChange(null));
     mapLayer.addChild(graphics);
 
     const labelPoint = transform(region.label_x || region.x, region.label_y || region.y);
@@ -318,6 +381,7 @@ function drawScene(
     });
     title.anchor.set(0.5);
     title.position.set(labelPoint.x, labelPoint.y - 8);
+    title.alpha = isDimmed ? 0.46 : 1;
     mapLayer.addChild(title);
 
     const countLabel = new Text({
@@ -326,6 +390,7 @@ function drawScene(
     });
     countLabel.anchor.set(0.5);
     countLabel.position.set(labelPoint.x, labelPoint.y + 15 + index * 0);
+    countLabel.alpha = isDimmed ? 0.62 : 1;
     mapLayer.addChild(countLabel);
   });
 
@@ -343,6 +408,10 @@ function drawScene(
       graphic.drawCircle(point.x, point.y, isSelected ? radius + 2.5 : radius);
       graphic.endFill();
       graphic.on("pointertap", () => handlers.onSelectItem(item.source_item_id));
+      graphic.on("pointermove", (event: PixiPointerEvent) =>
+        handlers.onHoverChange(buildItemHoverCard(item, event, width, height)),
+      );
+      graphic.on("pointerout", () => handlers.onHoverChange(null));
       mapLayer.addChild(graphic);
     });
   }
@@ -353,6 +422,7 @@ type SceneModel = {
   regions: AtlasRegion[];
   edges: AtlasEdge[];
   evidenceItems: AtlasItem[];
+  filteringActive: boolean;
   selectedRegionKey: string | null;
   selectedSubregionKey: string | null;
   selectedItemId: number | null;
@@ -473,6 +543,66 @@ function buildSubregionEdges(regions: AtlasRegion[]): AtlasEdge[] {
   });
 
   return Array.from(edges.values());
+}
+
+function buildRegionHoverCard(
+  region: AtlasRegion,
+  level: AtlasLevel,
+  event: PixiPointerEvent,
+  width: number,
+  height: number,
+): AtlasHoverCard {
+  const rangeLabel = formatAtlasDateRange(region.time_start, region.time_end);
+  const lines = [
+    `${atlasRegionDisplayCount(region)} matching screenshots`,
+    region.top_labels.length > 0 ? region.top_labels.slice(0, 2).join(" · ") : "No topical labels",
+  ];
+
+  if (rangeLabel !== null) {
+    lines.push(rangeLabel);
+  }
+
+  return {
+    eyebrow: level === "overview" ? "Region" : "Lane",
+    title: region.title,
+    lines,
+    ...hoverPosition(event, width, height),
+  };
+}
+
+function buildItemHoverCard(
+  item: AtlasItem,
+  event: PixiPointerEvent,
+  width: number,
+  height: number,
+): AtlasHoverCard {
+  const lines = [item.app_hint ?? "Unknown app"];
+  if (item.observed_at !== null) {
+    lines.push(formatAtlasDateRange(item.observed_at, item.observed_at) ?? "");
+  }
+  if (item.object_refs.length > 0) {
+    lines.push(item.object_refs.slice(0, 2).map(humanizeAtlasValue).join(" · "));
+  }
+
+  return {
+    eyebrow: item.is_representative ? "Representative" : item.is_bridge ? "Bridge" : "Evidence",
+    title: item.semantic_summary ?? `Screenshot #${item.source_item_id}`,
+    lines: lines.filter((line) => line.length > 0),
+    ...hoverPosition(event, width, height),
+  };
+}
+
+function hoverPosition(
+  event: PixiPointerEvent,
+  width: number,
+  height: number,
+) {
+  const cardWidth = 250;
+  const cardHeight = 148;
+  return {
+    x: Math.min(Math.max(event.global.x + 16, 18), Math.max(width - cardWidth - 18, 18)),
+    y: Math.min(Math.max(event.global.y + 16, 18), Math.max(height - cardHeight - 18, 18)),
+  };
 }
 
 function handleTap(

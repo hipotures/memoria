@@ -79,7 +79,61 @@ describe("App", () => {
     expect(container.textContent).toContain("Trip booking lane");
     expect(container.textContent).toContain("arrival logistics");
     expect(container.textContent).toContain("maps");
+    expect(container.textContent).toContain("alice");
+    expect(container.textContent).toContain("Mar 2, 2026");
     expect(findButton("Open evidence", container).disabled).toBe(false);
+  });
+
+  it("keeps the atlas field visible when filters produce zero matches", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      changeInput(findInput("Search atlas", container), "void");
+    });
+
+    act(() => {
+      findButton("Apply filters", container).click();
+    });
+
+    await waitForText(container, "No regions match the current filters");
+    expect(container.textContent).toContain("Canvas preview unavailable in this environment.");
+  });
+
+  it("supports Enter drill shortcuts outside form fields without hijacking form controls", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      findButton("Travel Planning", container).click();
+    });
+
+    await waitForText(container, "2 representative screenshots");
+
+    act(() => {
+      pressEnter(findInput("Search atlas", container));
+    });
+
+    await flush();
+    expect(queryButton("Open evidence", container)).toBeNull();
+
+    act(() => {
+      pressEnter(document.body);
+    });
+
+    await waitForText(container, "Open evidence");
+
+    act(() => {
+      findButton("Trip booking lane", container).click();
+    });
+
+    await flush();
+
+    act(() => {
+      pressEnter(document.body);
+    });
+
+    await waitForText(container, "Evidence stack");
   });
 
   it("sends backend search state through overview, region detail, and evidence requests", async () => {
@@ -144,6 +198,48 @@ describe("App", () => {
     expect(container.textContent).toContain("Showing 1-1 of 8");
   });
 
+  it("surfaces dock metadata and local focus controls for the active focus", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      findButton("Travel Planning", container).click();
+    });
+
+    await waitForText(container, "2 representative screenshots");
+    expect(container.textContent).toContain("trip to berlin");
+    expect(container.textContent).toContain("Mar 1, 2026");
+
+    act(() => {
+      findButton("Filter app: Telegram", container).click();
+    });
+
+    await flush();
+
+    const appFilteredUrl = lastRequestUrl(fetchMock);
+    expect(requestPaths(fetchMock).slice(-2)).toEqual([
+      "/atlas/overview",
+      "/atlas/regions/region-travel",
+    ]);
+    expect(appFilteredUrl.pathname).toBe("/atlas/regions/region-travel");
+    expect(appFilteredUrl.searchParams.get("app_hint")).toBe("telegram");
+
+    act(() => {
+      findButton("Use focus window", container).click();
+    });
+
+    await flush();
+
+    const timeFilteredUrl = lastRequestUrl(fetchMock);
+    expect(requestPaths(fetchMock).slice(-2)).toEqual([
+      "/atlas/overview",
+      "/atlas/regions/region-travel",
+    ]);
+    expect(timeFilteredUrl.pathname).toBe("/atlas/regions/region-travel");
+    expect(timeFilteredUrl.searchParams.get("observed_from")).toBe("2026-03-01T00:00:00.000Z");
+    expect(timeFilteredUrl.searchParams.get("observed_to")).toBe("2026-03-08T23:59:59.999Z");
+  });
+
   it("uses backend evidence sort options rather than client-side reshuffling", async () => {
     await renderApp(root);
     await waitForText(container, "Atlas overview");
@@ -171,6 +267,7 @@ describe("App", () => {
     });
 
     await waitForText(container, "Notes packing checklist");
+    expect(container.textContent).toContain("Summary / topic-ish");
     expect(indexOfText(container, "Notes packing checklist")).toBeLessThan(
       indexOfText(container, "Browser booking confirmation"),
     );
@@ -225,15 +322,20 @@ function lastRequestUrl(mock: ReturnType<typeof vi.fn>): URL {
 }
 
 function findButton(label: string, container: HTMLElement): HTMLButtonElement {
-  const button = Array.from(container.querySelectorAll("button")).find(
-    (candidate) => candidate.textContent?.trim() === label,
-  );
+  const button = queryButton(label, container);
 
   if (!(button instanceof HTMLButtonElement)) {
     throw new Error(`Could not find button with label: ${label}`);
   }
 
   return button;
+}
+
+function queryButton(label: string, container: HTMLElement): HTMLButtonElement | null {
+  const button = Array.from(container.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.trim() === label,
+  );
+  return button instanceof HTMLButtonElement ? button : null;
 }
 
 function findInput(label: string, container: HTMLElement): HTMLInputElement {
@@ -278,6 +380,10 @@ function changeSelect(select: HTMLSelectElement, value: string) {
   select.dispatchEvent(new Event("change", { bubbles: true }));
 }
 
+function pressEnter(target: EventTarget) {
+  target.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", bubbles: true }));
+}
+
 function indexOfText(container: HTMLElement, text: string): number {
   const content = container.textContent ?? "";
   const index = content.indexOf(text);
@@ -298,7 +404,7 @@ function jsonResponse(payload: unknown) {
 
 function buildOverviewPayload(url: URL) {
   const searchQuery = url.searchParams.get("search_query");
-  const filteredMatchCount = searchQuery === "hotel" ? 3 : 8;
+  const filteredMatchCount = searchQuery === "hotel" ? 3 : searchQuery === "void" ? 0 : 8;
 
   return {
     atlas_run: buildAtlasRun(),
@@ -318,7 +424,7 @@ function buildOverviewPayload(url: URL) {
         title: "Finance Review",
         x: 220,
         y: -40,
-        overlay: { match_count: searchQuery === "hotel" ? 0 : 2 },
+        overlay: { match_count: searchQuery === "hotel" || searchQuery === "void" ? 0 : 2 },
         top_apps: ["slack"],
         top_labels: ["budget review"],
         top_entities: ["topic:month-end-close"],
@@ -357,10 +463,13 @@ function buildRegionDetailPayload(url: URL) {
         title: "Trip booking lane",
         x: -110,
         y: -20,
-        overlay: { match_count: searchQuery === "hotel" ? 1 : 5 },
+        overlay: { match_count: searchQuery === "hotel" ? 1 : searchQuery === "void" ? 0 : 5 },
         top_labels: ["arrival logistics"],
         top_apps: ["maps"],
+        top_people: ["person:alice"],
         top_entities: ["task:plan-arrival"],
+        time_start: "2026-03-02T08:00:00Z",
+        time_end: "2026-03-04T11:00:00Z",
       }),
       buildRegion({
         region_key: "region-travel/subregion-2",
@@ -369,7 +478,7 @@ function buildRegionDetailPayload(url: URL) {
         title: "Packing lane",
         x: 120,
         y: 35,
-        overlay: { match_count: searchQuery === "hotel" ? 0 : 3 },
+        overlay: { match_count: searchQuery === "hotel" || searchQuery === "void" ? 0 : 3 },
         top_labels: ["packing"],
         top_apps: ["notes"],
         top_entities: ["task:review-final-checklist"],
@@ -387,6 +496,8 @@ function buildRegionDetailPayload(url: URL) {
               representative_rank: 1,
             }),
           ]
+        : searchQuery === "void"
+          ? []
         : [
             buildItem({
               source_item_id: 101,

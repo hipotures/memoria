@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useReducer, useState } from "react";
+import { useEffect, useMemo, useReducer, useRef, useState } from "react";
 
 import type {
   AtlasEvidenceSliceResponse,
@@ -21,6 +21,15 @@ import {
 } from "./components/AtlasToolbar";
 import { InsightDock } from "./components/InsightDock";
 import { RegionNavigator } from "./components/RegionNavigator";
+import {
+  applyOverlayFilter,
+  inputDateFromIso,
+  isFocusWindowActive,
+  regionSetHasMatches,
+  titleCaseAtlasValue,
+  toEndOfDayIso,
+  toStartOfDayIso,
+} from "./lib/atlasPresentation";
 import { splitEvidenceSections } from "./lib/evidenceSections";
 import { atlasReducer, initialAtlasState } from "./state/atlasReducer";
 
@@ -56,6 +65,11 @@ export default function App() {
   const [evidenceData, setEvidenceData] = useState<AtlasEvidenceSliceResponse | null>(null);
   const [evidenceState, setEvidenceState] = useState<LoadState>("idle");
   const [evidenceError, setEvidenceError] = useState<string | null>(null);
+  const toolbarDraftRef = useRef(toolbarDraft);
+
+  useEffect(() => {
+    toolbarDraftRef.current = toolbarDraft;
+  }, [toolbarDraft]);
 
   useEffect(() => {
     let cancelled = false;
@@ -237,33 +251,28 @@ export default function App() {
   const activeFocusRegion = selectedSubregion ?? selectedRegion;
   const searchQuery = serverFilters.search_query?.trim() ?? "";
   const backendFilteringActive = hasBackendFilters(serverFilters);
+  const structuralOverviewRegions = overviewData?.regions ?? [];
+  const structuralOverviewEdges = overviewData?.edges ?? [];
+  const structuralSubregions = activeRegionDetail?.subregions ?? [];
 
-  const visibleRegions = useMemo(
+  const listedRegions = useMemo(
     () =>
       applyOverlayFilter(
-        overviewData?.regions ?? [],
+        structuralOverviewRegions,
         backendFilteringActive,
         atlasState.selectedRegionKey,
       ),
-    [atlasState.selectedRegionKey, backendFilteringActive, overviewData],
+    [atlasState.selectedRegionKey, backendFilteringActive, structuralOverviewRegions],
   );
 
-  const visibleOverviewEdges = useMemo(() => {
-    const visibleKeys = new Set(visibleRegions.map((region) => region.region_key));
-    return (overviewData?.edges ?? []).filter(
-      (edge) =>
-        visibleKeys.has(edge.source_region_key) && visibleKeys.has(edge.target_region_key),
-    );
-  }, [overviewData, visibleRegions]);
-
-  const visibleSubregions = useMemo(
+  const listedSubregions = useMemo(
     () =>
       applyOverlayFilter(
-        activeRegionDetail?.subregions ?? [],
+        structuralSubregions,
         backendFilteringActive,
         atlasState.selectedSubregionKey,
       ),
-    [activeRegionDetail, atlasState.selectedSubregionKey, backendFilteringActive],
+    [atlasState.selectedSubregionKey, backendFilteringActive, structuralSubregions],
   );
 
   const regionRepresentatives = activeRegionDetail?.representatives ?? [];
@@ -327,10 +336,13 @@ export default function App() {
     return Array.from(values).sort((left, right) => left.localeCompare(right));
   }, [activeFocusRegion, activeRegionDetail, overviewData, visibleEvidenceItems]);
 
+  const stageRegions = atlasState.level === "overview" ? structuralOverviewRegions : structuralSubregions;
   const emptyFilteredState =
+    backendFilteringActive &&
     overviewState === "ready" &&
     overviewData?.atlas_run !== null &&
-    visibleRegions.length === 0;
+    stageRegions.length > 0 &&
+    !regionSetHasMatches(stageRegions);
 
   const handleDraftChange = (patch: Partial<AtlasToolbarDraft>) => {
     setToolbarDraft((current) => ({ ...current, ...patch }));
@@ -396,6 +408,74 @@ export default function App() {
     setEvidenceSort(sort);
   };
 
+  const handleCommitDraftPatch = (patch: Partial<AtlasToolbarDraft>) => {
+    const nextDraft = { ...toolbarDraftRef.current, ...patch };
+    toolbarDraftRef.current = nextDraft;
+    setToolbarDraft(nextDraft);
+    setLongTailOffset(0);
+    setServerFilters(buildServerFilters(nextDraft));
+  };
+
+  const handleApplyFocusApp = (appHint: string) => {
+    handleCommitDraftPatch({ appHint });
+  };
+
+  const handleApplyFocusWindow = () => {
+    if (activeFocusRegion === null) {
+      return;
+    }
+
+    handleCommitDraftPatch({
+      observedFrom: inputDateFromIso(activeFocusRegion.time_start),
+      observedTo: inputDateFromIso(activeFocusRegion.time_end),
+    });
+  };
+
+  const handleClearFocusFilters = () => {
+    handleCommitDraftPatch({
+      appHint: "",
+      observedFrom: "",
+      observedTo: "",
+    });
+  };
+
+  useEffect(() => {
+    const handleKeydown = (event: KeyboardEvent) => {
+      if (event.key !== "Enter" || event.repeat || event.defaultPrevented) {
+        return;
+      }
+
+      const target = event.target;
+      if (
+        target instanceof HTMLElement &&
+        (target.isContentEditable ||
+          target.closest("input, select, textarea, button, a, [role='button']") !== null)
+      ) {
+        return;
+      }
+
+      if (atlasState.level === "overview" && atlasState.selectedRegionKey !== null) {
+        event.preventDefault();
+        handleDrillRegion();
+        return;
+      }
+
+      if (atlasState.level === "region" && atlasState.selectedSubregionKey !== null) {
+        event.preventDefault();
+        handleDrillSubregion();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeydown);
+    return () => {
+      window.removeEventListener("keydown", handleKeydown);
+    };
+  }, [
+    atlasState.level,
+    atlasState.selectedRegionKey,
+    atlasState.selectedSubregionKey,
+  ]);
+
   const canPreviousEvidencePage =
     evidenceData !== null && evidenceData.long_tail_page.offset > 0;
   const canNextEvidencePage =
@@ -459,24 +539,30 @@ export default function App() {
               </section>
             ) : null}
 
-            {emptyFilteredState ? (
-              <section className="atlas-empty-state">
-                <h2>No regions match the current filters</h2>
-                <p>Broaden the time window or clear the server filters to restore the atlas field.</p>
-              </section>
-            ) : null}
-
             {currentError === null &&
             overviewData?.atlas_run !== null &&
             (overviewData?.regions.length ?? 0) > 0 &&
-            !emptyFilteredState ? (
+            stageRegions.length > 0 ? (
               <AtlasCanvas
                 level={atlasState.level}
-                overviewRegions={visibleRegions}
-                overviewEdges={visibleOverviewEdges}
+                overviewRegions={structuralOverviewRegions}
+                overviewEdges={structuralOverviewEdges}
                 focusRegion={selectedRegion}
-                subregions={visibleSubregions}
+                subregions={structuralSubregions}
                 evidenceItems={visibleEvidenceItems}
+                filteringActive={backendFilteringActive}
+                stageNotice={
+                  emptyFilteredState
+                    ? {
+                        title:
+                          atlasState.level === "overview"
+                            ? "No regions match the current filters"
+                            : "No visible lanes match the current filters",
+                        detail:
+                          "The atlas field stays pinned so you can keep your bearings while broadening the request.",
+                      }
+                    : null
+                }
                 selectedRegionKey={atlasState.selectedRegionKey}
                 selectedSubregionKey={atlasState.selectedSubregionKey}
                 selectedItemId={atlasState.selectedItemId}
@@ -493,21 +579,25 @@ export default function App() {
         <InsightDock
           level={atlasState.level}
           loading={loading}
-          visibleRegions={visibleRegions}
+          visibleRegions={listedRegions}
           selectedRegion={selectedRegion}
           activeFocusRegion={activeFocusRegion}
-          visibleSubregions={visibleSubregions}
+          visibleSubregions={listedSubregions}
           selectedSubregion={selectedSubregion}
           selectedItem={selectedItem}
           regionRepresentatives={regionRepresentatives}
           regionDetailLoaded={activeRegionDetail !== null}
           evidenceSections={evidenceSections}
           evidenceSort={evidenceSort}
+          currentFilters={serverFilters}
           onEvidenceSortChange={handleEvidenceSortChange}
           onSelectRegion={handleSelectRegion}
           onDrillRegion={() => handleDrillRegion()}
           onSelectSubregion={handleSelectSubregion}
           onDrillSubregion={() => handleDrillSubregion()}
+          onApplyFocusApp={handleApplyFocusApp}
+          onApplyFocusWindow={handleApplyFocusWindow}
+          onClearFocusFilters={handleClearFocusFilters}
           onSelectItem={handleSelectItem}
           onPreviousEvidencePage={() =>
             setLongTailOffset((current) => Math.max(current - 25, 0))
@@ -529,30 +619,6 @@ function buildServerFilters(draft: AtlasToolbarDraft): AtlasFilters {
     observed_to: draft.observedTo ? toEndOfDayIso(draft.observedTo) : null,
     search_query: draft.searchText.trim() || null,
   };
-}
-
-function toStartOfDayIso(dateValue: string): string {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day, 0, 0, 0, 0)).toISOString();
-}
-
-function toEndOfDayIso(dateValue: string): string {
-  const [year, month, day] = dateValue.split("-").map(Number);
-  return new Date(Date.UTC(year, month - 1, day, 23, 59, 59, 999)).toISOString();
-}
-
-function applyOverlayFilter(
-  regions: AtlasRegion[],
-  filteringActive: boolean,
-  selectedKey: string | null,
-): AtlasRegion[] {
-  if (!filteringActive) {
-    return regions;
-  }
-
-  return regions.filter(
-    (region) => region.overlay.match_count > 0 || region.region_key === selectedKey,
-  );
 }
 
 function sameFilters(left: AtlasFilters, right: AtlasFilters): boolean {

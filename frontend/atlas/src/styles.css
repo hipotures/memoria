@@ -333,6 +333,52 @@ a {
   min-height: inherit;
 }
 
+.atlas-stage__notice,
+.atlas-stage__hover-card {
+  position: absolute;
+  z-index: 3;
+  max-width: min(320px, calc(100% - 36px));
+  padding: 12px 14px;
+  border-radius: 18px;
+  border: 1px solid rgba(71, 59, 43, 0.18);
+  background: rgba(255, 251, 244, 0.92);
+  box-shadow: 0 12px 28px rgba(56, 44, 30, 0.12);
+  backdrop-filter: blur(8px);
+}
+
+.atlas-stage__notice {
+  left: 24px;
+  bottom: 24px;
+}
+
+.atlas-stage__hover-card {
+  pointer-events: none;
+}
+
+.atlas-stage__notice strong,
+.atlas-stage__hover-card strong {
+  display: block;
+  color: var(--ink);
+}
+
+.atlas-stage__notice p,
+.atlas-stage__hover-card p,
+.atlas-stage__hover-card span {
+  margin: 0;
+  color: var(--ink-soft);
+}
+
+.atlas-stage__hover-card {
+  display: grid;
+  gap: 4px;
+}
+
+.atlas-stage__hover-card span {
+  font-size: 0.72rem;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+}
+
 .atlas-stage__viewport canvas {
   display: block;
   width: 100%;
@@ -448,6 +494,20 @@ a {
 .focus-summary {
   display: grid;
   gap: 6px;
+}
+
+.dock-focus-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+.dock-focus-actions__button {
+  min-height: 38px;
+  padding: 0 14px;
+  color: var(--dock-text);
+  border-color: rgba(255, 255, 255, 0.14);
 }
 
 .focus-summary strong,

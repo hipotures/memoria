@@ -1,4 +1,11 @@
-import type { AtlasEvidenceSort, AtlasItem, AtlasRegion } from "../api/contracts";
+import type { AtlasEvidenceSort, AtlasFilters, AtlasItem, AtlasRegion } from "../api/contracts";
+import {
+  formatAtlasDateRange,
+  humanizeAtlasValue,
+  isFocusWindowActive,
+  resolveFocusPeople,
+  titleCaseAtlasValue,
+} from "../lib/atlasPresentation";
 import type { EvidenceSections } from "../lib/evidenceSections";
 import type { AtlasLevel } from "../state/atlasReducer";
 import { EvidenceList } from "./EvidenceList";
@@ -16,11 +23,15 @@ type InsightDockProps = {
   regionDetailLoaded: boolean;
   evidenceSections: EvidenceSections<AtlasItem> | null;
   evidenceSort: AtlasEvidenceSort;
+  currentFilters: AtlasFilters;
   onEvidenceSortChange: (sort: AtlasEvidenceSort) => void;
   onSelectRegion: (regionKey: string) => void;
   onDrillRegion: () => void;
   onSelectSubregion: (subregionKey: string) => void;
   onDrillSubregion: () => void;
+  onApplyFocusApp: (appHint: string) => void;
+  onApplyFocusWindow: () => void;
+  onClearFocusFilters: () => void;
   onSelectItem: (sourceItemId: number) => void;
   onPreviousEvidencePage: () => void;
   onNextEvidencePage: () => void;
@@ -41,17 +52,32 @@ export function InsightDock({
   regionDetailLoaded,
   evidenceSections,
   evidenceSort,
+  currentFilters,
   onEvidenceSortChange,
   onSelectRegion,
   onDrillRegion,
   onSelectSubregion,
   onDrillSubregion,
+  onApplyFocusApp,
+  onApplyFocusWindow,
+  onClearFocusFilters,
   onSelectItem,
   onPreviousEvidencePage,
   onNextEvidencePage,
   canPreviousEvidencePage,
   canNextEvidencePage,
 }: InsightDockProps) {
+  const peopleValues = resolveFocusPeople(activeFocusRegion);
+  const timeRange = formatAtlasDateRange(
+    activeFocusRegion?.time_start,
+    activeFocusRegion?.time_end,
+  );
+  const primaryFocusApp = activeFocusRegion?.top_apps[0] ?? null;
+  const focusWindowActive = isFocusWindowActive(currentFilters, activeFocusRegion);
+  const hasLocalFocusFilters =
+    currentFilters.app_hint !== null ||
+    currentFilters.observed_from !== null ||
+    currentFilters.observed_to !== null;
   const dockTitle =
     selectedSubregion?.title ??
     selectedRegion?.title ??
@@ -81,6 +107,43 @@ export function InsightDock({
             <span>
               {activeFocusRegion.top_labels.slice(0, 2).join(" · ") || "No top labels yet"}
             </span>
+            {peopleValues.length > 0 ? (
+              <span>People / anchors: {peopleValues.slice(0, 2).join(" · ")}</span>
+            ) : null}
+            {timeRange !== null ? <span>{timeRange}</span> : null}
+            {activeFocusRegion !== null ? (
+              <div className="dock-focus-actions">
+                {primaryFocusApp !== null ? (
+                  <button
+                    type="button"
+                    className="atlas-button atlas-button--ghost dock-focus-actions__button"
+                    onClick={() => onApplyFocusApp(primaryFocusApp)}
+                    disabled={currentFilters.app_hint === primaryFocusApp}
+                  >
+                    Filter app: {titleCaseAtlasValue(primaryFocusApp)}
+                  </button>
+                ) : null}
+                {timeRange !== null ? (
+                  <button
+                    type="button"
+                    className="atlas-button atlas-button--ghost dock-focus-actions__button"
+                    onClick={onApplyFocusWindow}
+                    disabled={focusWindowActive}
+                  >
+                    Use focus window
+                  </button>
+                ) : null}
+                {hasLocalFocusFilters ? (
+                  <button
+                    type="button"
+                    className="atlas-button atlas-button--ghost dock-focus-actions__button"
+                    onClick={onClearFocusFilters}
+                  >
+                    Clear focus filters
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
           </div>
         ) : (
           <p className="dock-empty">Select a region to open the atlas workbench.</p>
@@ -210,13 +273,13 @@ export function InsightDock({
               <select
                 value={evidenceSort}
                 onChange={(event) =>
-                  onEvidenceSortChange(event.currentTarget.value as AtlasEvidenceSort)
+                onEvidenceSortChange(event.currentTarget.value as AtlasEvidenceSort)
                 }
               >
                 <option value="observed_at_desc">Newest first</option>
                 <option value="observed_at_asc">Oldest first</option>
                 <option value="app_hint_asc">App</option>
-                <option value="semantic_summary_asc">Title / summary</option>
+                <option value="semantic_summary_asc">Summary / topic-ish</option>
               </select>
             </label>
           </header>
@@ -238,8 +301,10 @@ export function InsightDock({
         </header>
         <div className="facet-grid">
           <Facet label="Labels" values={activeFocusRegion?.top_labels ?? []} />
+          <Facet label="People / anchors" values={peopleValues} />
           <Facet label="Apps" values={activeFocusRegion?.top_apps ?? []} />
           <Facet label="Entities" values={activeFocusRegion?.top_entities ?? []} />
+          <Facet label="Window" values={timeRange !== null ? [timeRange] : []} />
         </div>
       </section>
 
@@ -266,7 +331,11 @@ function Facet({ label, values }: { label: string; values: string[] }) {
   return (
     <div className="facet-panel">
       <span>{label}</span>
-      <strong>{values.length > 0 ? values.slice(0, 3).join(" · ") : "None"}</strong>
+      <strong>
+        {values.length > 0
+          ? values.slice(0, 3).map(humanizeAtlasValue).join(" · ")
+          : "None"}
+      </strong>
     </div>
   );
 }
