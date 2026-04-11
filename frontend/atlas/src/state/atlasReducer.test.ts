@@ -85,4 +85,32 @@ describe("atlasReducer", () => {
     expect(subregionSelected).toEqual(overviewSelection);
     expect(subregionDrilled).toEqual(overviewSelection);
   });
+
+  it("can move back from evidence to region focus without losing the selected subregion", () => {
+    const regionState = atlasReducer(initialAtlasState, {
+      type: "region.drilled",
+      regionKey: "region-a",
+    });
+    const evidenceState = atlasReducer(
+      atlasReducer(regionState, {
+        type: "subregion.drilled",
+        subregionKey: "region-a/subregion-1",
+      }),
+      {
+        type: "item.selected",
+        sourceItemId: 42,
+      },
+    );
+
+    const backToRegion = atlasReducer(evidenceState, {
+      type: "breadcrumbs.region",
+    });
+
+    expect(backToRegion).toEqual({
+      level: "region",
+      selectedRegionKey: "region-a",
+      selectedSubregionKey: "region-a/subregion-1",
+      selectedItemId: null,
+    });
+  });
 });

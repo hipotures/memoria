@@ -13,6 +13,7 @@ export type AtlasAction =
   | { type: "subregion.selected"; subregionKey: string }
   | { type: "subregion.drilled"; subregionKey: string }
   | { type: "item.selected"; sourceItemId: number }
+  | { type: "breadcrumbs.region" }
   | { type: "breadcrumbs.reset" };
 
 export const initialAtlasState: AtlasState = {
@@ -63,6 +64,17 @@ export function atlasReducer(state: AtlasState, action: AtlasAction): AtlasState
       return {
         ...state,
         selectedItemId: action.sourceItemId,
+      };
+    case "breadcrumbs.region":
+      if (state.selectedRegionKey === null) {
+        return initialAtlasState;
+      }
+
+      return {
+        level: "region",
+        selectedRegionKey: state.selectedRegionKey,
+        selectedSubregionKey: state.selectedSubregionKey,
+        selectedItemId: null,
       };
     case "breadcrumbs.reset":
       return initialAtlasState;

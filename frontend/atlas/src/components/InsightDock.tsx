@@ -1,0 +1,225 @@
+import type { AtlasItem, AtlasRegion } from "../api/contracts";
+import type { EvidenceSections } from "../lib/evidenceSections";
+import type { AtlasLevel } from "../state/atlasReducer";
+import { EvidenceList } from "./EvidenceList";
+
+type InsightDockProps = {
+  level: AtlasLevel;
+  loading: boolean;
+  visibleRegions: AtlasRegion[];
+  selectedRegion: AtlasRegion | null;
+  visibleSubregions: AtlasRegion[];
+  selectedSubregion: AtlasRegion | null;
+  selectedItem: AtlasItem | null;
+  regionRepresentatives: AtlasItem[];
+  evidenceSections: EvidenceSections<AtlasItem> | null;
+  onSelectRegion: (regionKey: string) => void;
+  onDrillRegion: () => void;
+  onSelectSubregion: (subregionKey: string) => void;
+  onDrillSubregion: () => void;
+  onSelectItem: (sourceItemId: number) => void;
+  onPreviousEvidencePage: () => void;
+  onNextEvidencePage: () => void;
+  canPreviousEvidencePage: boolean;
+  canNextEvidencePage: boolean;
+};
+
+export function InsightDock({
+  level,
+  loading,
+  visibleRegions,
+  selectedRegion,
+  visibleSubregions,
+  selectedSubregion,
+  selectedItem,
+  regionRepresentatives,
+  evidenceSections,
+  onSelectRegion,
+  onDrillRegion,
+  onSelectSubregion,
+  onDrillSubregion,
+  onSelectItem,
+  onPreviousEvidencePage,
+  onNextEvidencePage,
+  canPreviousEvidencePage,
+  canNextEvidencePage,
+}: InsightDockProps) {
+  return (
+    <aside className="insight-dock">
+      <div className="insight-dock__hero">
+        <p className="insight-dock__eyebrow">Workbench</p>
+        <h2>
+          {level === "overview"
+            ? "Atlas overview"
+            : level === "region"
+              ? selectedRegion?.title ?? "Region focus"
+              : selectedSubregion?.title ?? "Evidence focus"}
+        </h2>
+        <p>
+          {loading
+            ? "Refreshing the active view."
+            : "Selection details, facets, and drill actions stay pinned here while the atlas remains visible."}
+        </p>
+      </div>
+
+      <section className="dock-panel">
+        <header className="dock-panel__header">
+          <h3>Focus summary</h3>
+        </header>
+        {selectedRegion !== null ? (
+          <div className="focus-summary">
+            <strong>{selectedRegion.title}</strong>
+            <span>{selectedRegion.overlay.match_count} matching screenshots</span>
+            <span>{selectedRegion.item_count} screenshots in region</span>
+            <span>{selectedRegion.top_labels.slice(0, 2).join(" · ") || "No top labels yet"}</span>
+          </div>
+        ) : (
+          <p className="dock-empty">Select a region to inspect its themes before drilling deeper.</p>
+        )}
+      </section>
+
+      <section className="dock-panel">
+        <header className="dock-panel__header">
+          <h3>{level === "overview" ? "Regions" : "Subregions"}</h3>
+          {level === "overview" ? (
+            <button
+              type="button"
+              className="atlas-button atlas-button--ghost"
+              onClick={onDrillRegion}
+              disabled={selectedRegion === null}
+            >
+              Enter region
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="atlas-button atlas-button--ghost"
+              onClick={onDrillSubregion}
+              disabled={selectedSubregion === null}
+            >
+              Open evidence
+            </button>
+          )}
+        </header>
+
+        {level === "overview" ? (
+          <ul className="dock-list">
+            {visibleRegions.map((region) => (
+              <li key={region.region_key} className="dock-list__row">
+                <button
+                  type="button"
+                  className={`dock-list__button ${
+                    region.region_key === selectedRegion?.region_key ? "dock-list__button--selected" : ""
+                  }`}
+                  onClick={() => onSelectRegion(region.region_key)}
+                >
+                  {region.title}
+                </button>
+                <span>{region.overlay.match_count} matching screenshots</span>
+              </li>
+            ))}
+          </ul>
+        ) : (
+          <ul className="dock-list">
+            {visibleSubregions.map((subregion) => (
+              <li key={subregion.region_key} className="dock-list__row">
+                <button
+                  type="button"
+                  className={`dock-list__button ${
+                    subregion.region_key === selectedSubregion?.region_key
+                      ? "dock-list__button--selected"
+                      : ""
+                  }`}
+                  onClick={() => onSelectSubregion(subregion.region_key)}
+                >
+                  {subregion.title}
+                </button>
+                <span>{subregion.overlay.match_count} matching screenshots</span>
+              </li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      {level === "region" ? (
+        <section className="dock-panel">
+          <header className="dock-panel__header">
+            <h3>Representative screenshots</h3>
+          </header>
+          <ul className="dock-representatives">
+            {regionRepresentatives.map((item) => (
+              <li key={item.source_item_id}>
+                <button
+                  type="button"
+                  className={`dock-representatives__button ${
+                    item.source_item_id === selectedItem?.source_item_id
+                      ? "dock-representatives__button--selected"
+                      : ""
+                  }`}
+                  onClick={() => onSelectItem(item.source_item_id)}
+                >
+                  <span>#{item.source_item_id}</span>
+                  <strong>{item.semantic_summary ?? "Untitled evidence"}</strong>
+                  <span>{item.app_hint ?? "Unknown app"}</span>
+                </button>
+              </li>
+            ))}
+          </ul>
+        </section>
+      ) : null}
+
+      {level === "evidence" && evidenceSections !== null ? (
+        <section className="dock-panel dock-panel--evidence">
+          <header className="dock-panel__header">
+            <h3>Evidence stack</h3>
+          </header>
+          <EvidenceList
+            sections={evidenceSections}
+            selectedItemId={selectedItem?.source_item_id ?? null}
+            onSelectItem={onSelectItem}
+            onPreviousPage={onPreviousEvidencePage}
+            onNextPage={onNextEvidencePage}
+            canPreviousPage={canPreviousEvidencePage}
+            canNextPage={canNextEvidencePage}
+          />
+        </section>
+      ) : null}
+
+      <section className="dock-panel">
+        <header className="dock-panel__header">
+          <h3>Facets</h3>
+        </header>
+        <div className="facet-grid">
+          <Facet label="Labels" values={selectedRegion?.top_labels ?? []} />
+          <Facet label="Apps" values={selectedRegion?.top_apps ?? []} />
+          <Facet label="Entities" values={selectedRegion?.top_entities ?? []} />
+        </div>
+      </section>
+
+      {selectedItem !== null ? (
+        <section className="dock-panel">
+          <header className="dock-panel__header">
+            <h3>Selected evidence</h3>
+          </header>
+          <div className="focus-summary">
+            <strong>{selectedItem.semantic_summary ?? "Untitled evidence"}</strong>
+            <span>{selectedItem.app_hint ?? "Unknown app"}</span>
+            <span>{selectedItem.object_refs.slice(0, 3).join(" · ") || "No linked objects"}</span>
+            {selectedItem.screenshot_detail_url !== null ? (
+              <a href={selectedItem.screenshot_detail_url}>Open screenshot detail</a>
+            ) : null}
+          </div>
+        </section>
+      ) : null}
+    </aside>
+  );
+}
+
+function Facet({ label, values }: { label: string; values: string[] }) {
+  return (
+    <div className="facet-panel">
+      <span>{label}</span>
+      <strong>{values.length > 0 ? values.slice(0, 3).join(" · ") : "None"}</strong>
+    </div>
+  );
+}
