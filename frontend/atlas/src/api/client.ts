@@ -54,7 +54,12 @@ async function atlasFetch<T>(
   params: Record<string, QueryValue>,
   options?: AtlasClientOptions,
 ): Promise<T> {
-  const response = await fetch(buildAtlasUrl(path, params, options));
+  const response = await fetch(
+    buildAtlasRequestUrl(path, params, {
+      baseUrl: options?.baseUrl,
+      envOrigin: import.meta.env.VITE_ATLAS_API_ORIGIN,
+    }),
+  );
 
   if (!response.ok) {
     throw new Error(`Atlas request failed: ${response.status} ${response.statusText}`);
@@ -74,32 +79,42 @@ function atlasFilterParams(filters: AtlasFilters): Record<string, QueryValue> {
   };
 }
 
-function buildAtlasUrl(
+type AtlasRequestUrlOptions = {
+  baseUrl?: string;
+  envOrigin?: string | null;
+};
+
+export function buildAtlasRequestUrl(
   path: string,
   params: Record<string, QueryValue>,
-  options?: AtlasClientOptions,
+  options: AtlasRequestUrlOptions = {},
 ): string {
-  const url = new URL(path, resolveBaseUrl(options?.baseUrl));
+  const query = new URLSearchParams();
 
   for (const [key, value] of Object.entries(params)) {
     if (value === undefined || value === null || value === "") {
       continue;
     }
 
-    url.searchParams.set(key, String(value));
+    query.set(key, String(value));
   }
 
-  return url.toString();
+  const queryString = query.toString();
+  const requestPath = queryString.length > 0 ? `${path}?${queryString}` : path;
+  const apiOrigin = normalizeAtlasOrigin(options.baseUrl) ?? normalizeAtlasOrigin(options.envOrigin);
+
+  if (apiOrigin === null) {
+    return requestPath;
+  }
+
+  return new URL(requestPath, apiOrigin).toString();
 }
 
-function resolveBaseUrl(baseUrl?: string): string {
-  if (baseUrl) {
-    return baseUrl;
+function normalizeAtlasOrigin(origin?: string | null): string | null {
+  if (origin === undefined || origin === null) {
+    return null;
   }
 
-  if (typeof window !== "undefined") {
-    return window.location.origin;
-  }
-
-  return "http://localhost";
+  const trimmed = origin.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }

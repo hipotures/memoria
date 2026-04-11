@@ -46,4 +46,18 @@ describe("atlasReducer", () => {
     expect(evidenceState.selectedSubregionKey).toBe("region-a/subregion-1");
     expect(evidenceState.selectedItemId).toBeNull();
   });
+
+  it("ignores subregion actions until a region has been selected", () => {
+    const selected = atlasReducer(initialAtlasState, {
+      type: "subregion.selected",
+      subregionKey: "region-a/subregion-1",
+    });
+    const drilled = atlasReducer(initialAtlasState, {
+      type: "subregion.drilled",
+      subregionKey: "region-a/subregion-1",
+    });
+
+    expect(selected).toEqual(initialAtlasState);
+    expect(drilled).toEqual(initialAtlasState);
+  });
 });

@@ -64,7 +64,7 @@ describe("splitEvidenceSections", () => {
     });
   });
 
-  it("filters long-tail entries that also appear in representative or bridge sections", () => {
+  it("preserves backend long-tail pagination exactly as returned", () => {
     const sections = splitEvidenceSections({
       representatives: [
         { source_item_id: 11, is_representative: true, is_bridge: false },
@@ -89,6 +89,8 @@ describe("splitEvidenceSections", () => {
       },
     });
 
-    expect(sections.longTail.items.map((item) => item.source_item_id)).toEqual([33]);
+    expect(sections.longTail.items.map((item) => item.source_item_id)).toEqual([11, 22, 33]);
+    expect(sections.longTail.total).toBe(3);
+    expect(sections.totals.longTail).toBe(3);
   });
 });

@@ -4,6 +4,7 @@ import { atlasReducer, initialAtlasState } from "./state/atlasReducer";
 
 export default function App() {
   const [state, dispatch] = useReducer(atlasReducer, initialAtlasState);
+  const hasActiveRegion = state.selectedRegionKey !== null;
 
   return (
     <main className="app-shell">
@@ -65,6 +66,7 @@ export default function App() {
             </button>
             <button
               type="button"
+              disabled={!hasActiveRegion}
               onClick={() =>
                 dispatch({ type: "subregion.selected", subregionKey: "region-a/subregion-1" })
               }
@@ -73,6 +75,7 @@ export default function App() {
             </button>
             <button
               type="button"
+              disabled={!hasActiveRegion}
               onClick={() =>
                 dispatch({ type: "subregion.drilled", subregionKey: "region-a/subregion-1" })
               }

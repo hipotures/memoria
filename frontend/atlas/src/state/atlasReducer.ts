@@ -39,12 +39,20 @@ export function atlasReducer(state: AtlasState, action: AtlasAction): AtlasState
         selectedItemId: null,
       };
     case "subregion.selected":
+      if (state.selectedRegionKey === null) {
+        return state;
+      }
+
       return {
         ...state,
         selectedSubregionKey: action.subregionKey,
         selectedItemId: null,
       };
     case "subregion.drilled":
+      if (state.selectedRegionKey === null) {
+        return state;
+      }
+
       return {
         ...state,
         level: "evidence",
