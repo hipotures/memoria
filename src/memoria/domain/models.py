@@ -6,6 +6,7 @@ from sqlalchemy import Boolean
 from sqlalchemy import DateTime
 from sqlalchemy import Float
 from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKeyConstraint
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import Text
@@ -321,6 +322,12 @@ class AtlasRun(Base):
 class AtlasRegion(Base):
     __tablename__ = "atlas_regions"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["atlas_run_id", "parent_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_regions_parent_region",
+        ),
         UniqueConstraint("atlas_run_id", "region_key", name="uq_atlas_region_identity"),
     )
 
@@ -353,6 +360,18 @@ class AtlasRegion(Base):
 class AtlasItem(Base):
     __tablename__ = "atlas_items"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["atlas_run_id", "region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_items_region",
+        ),
+        ForeignKeyConstraint(
+            ["atlas_run_id", "subregion_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_items_subregion",
+        ),
         UniqueConstraint("atlas_run_id", "source_item_id", name="uq_atlas_item_identity"),
     )
 
@@ -385,6 +404,18 @@ class AtlasItem(Base):
 class AtlasEdge(Base):
     __tablename__ = "atlas_edges"
     __table_args__ = (
+        ForeignKeyConstraint(
+            ["atlas_run_id", "source_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_edges_source_region",
+        ),
+        ForeignKeyConstraint(
+            ["atlas_run_id", "target_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_edges_target_region",
+        ),
         UniqueConstraint(
             "atlas_run_id",
             "source_region_key",

@@ -75,6 +75,12 @@ def upgrade() -> None:
         sa.Column("bridge_neighbors_json", sa.Text(), nullable=False, server_default="[]"),
         sa.Column("cohesion_score", sa.Float(), nullable=False, server_default="0.0"),
         sa.ForeignKeyConstraint(["atlas_run_id"], ["atlas_runs.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["atlas_run_id", "parent_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            name="fk_atlas_regions_parent_region",
+            ondelete="CASCADE",
+        ),
         sa.UniqueConstraint("atlas_run_id", "region_key", name="uq_atlas_region_identity"),
     )
     op.create_index("ix_atlas_regions_atlas_run_id", "atlas_regions", ["atlas_run_id"], unique=False)
@@ -102,6 +108,18 @@ def upgrade() -> None:
         sa.Column("bridge_score", sa.Float(), nullable=False, server_default="0.0"),
         sa.Column("screenshot_detail_url", sa.Text(), nullable=True),
         sa.ForeignKeyConstraint(["atlas_run_id"], ["atlas_runs.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["atlas_run_id", "region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            name="fk_atlas_items_region",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["atlas_run_id", "subregion_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            name="fk_atlas_items_subregion",
+            ondelete="CASCADE",
+        ),
         sa.ForeignKeyConstraint(["source_item_id"], ["source_items.id"], ondelete="CASCADE"),
         sa.UniqueConstraint("atlas_run_id", "source_item_id", name="uq_atlas_item_identity"),
     )
@@ -119,6 +137,18 @@ def upgrade() -> None:
         sa.Column("weight", sa.Float(), nullable=False, server_default="0.0"),
         sa.Column("edge_type", sa.String(length=64), nullable=False),
         sa.ForeignKeyConstraint(["atlas_run_id"], ["atlas_runs.id"], ondelete="CASCADE"),
+        sa.ForeignKeyConstraint(
+            ["atlas_run_id", "source_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            name="fk_atlas_edges_source_region",
+            ondelete="CASCADE",
+        ),
+        sa.ForeignKeyConstraint(
+            ["atlas_run_id", "target_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            name="fk_atlas_edges_target_region",
+            ondelete="CASCADE",
+        ),
         sa.UniqueConstraint(
             "atlas_run_id",
             "source_region_key",
