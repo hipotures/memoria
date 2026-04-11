@@ -152,6 +152,67 @@ class ScreenshotSearchResponse(BaseModel):
     offset: int
 
 
+class KnowledgeObjectResponse(BaseModel):
+    object_ref: str
+    object_type: str
+    title: str
+    status: str
+    confidence_score: float
+
+
+class KnowledgeTaskStatusResponse(BaseModel):
+    task_ref: str
+    task_title: str | None
+    status_value: str
+    claim_status: str
+
+
+class KnowledgeScreenshotResponse(BaseModel):
+    source_item_id: int
+    filename: str
+    semantic_summary: str | None
+    app_hint: str | None
+    observed_at: datetime | None
+    object_refs: list[str]
+
+
+class KnowledgeEvidenceResponse(BaseModel):
+    claim_id: int
+    source_item_id: int
+    fragment_type: str
+    fragment_ref: str
+    support_role: str
+
+
+class KnowledgeClaimResponse(BaseModel):
+    claim_id: int
+    claim_type: str
+    subject_ref: str
+    predicate: str
+    object_ref_or_value: str
+    status: str
+    confidence_score: float
+    observed_at: datetime
+
+
+class KnowledgeTopicResponse(BaseModel):
+    topic: KnowledgeObjectResponse
+    thread_refs: list[str]
+    task_statuses: list[KnowledgeTaskStatusResponse]
+    people: list[KnowledgeObjectResponse]
+    recent_screenshots: list[KnowledgeScreenshotResponse]
+    evidence: list[KnowledgeEvidenceResponse]
+
+
+class KnowledgeThreadResponse(BaseModel):
+    thread: KnowledgeObjectResponse
+    topic_ref: str | None
+    people: list[KnowledgeObjectResponse]
+    claims: list[KnowledgeClaimResponse]
+    recent_screenshots: list[KnowledgeScreenshotResponse]
+    evidence: list[KnowledgeEvidenceResponse]
+
+
 class HybridSearchHitResponse(BaseModel):
     source_item_id: int
     filename: str
@@ -196,6 +257,20 @@ class SemanticClusterDetailResponse(BaseModel):
     dominant_apps: list[str]
     time_start: datetime | None
     time_end: datetime | None
+
+
+class SemanticMapPointDetailResponse(BaseModel):
+    source_item_id: int
+    x: float
+    y: float
+    cluster_key: str | None
+    semantic_summary: str | None
+    app_hint: str | None
+    created_at: datetime | None
+    observed_at: datetime | None
+    object_refs: list[str]
+    evidence: list[KnowledgeEvidenceResponse]
+    screenshot_detail_url: str
 
 
 class SemanticClusterItemResponse(BaseModel):

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from alembic import command
@@ -20,6 +21,8 @@ from memoria.ingest.service import IngestScreenshotCommand
 from memoria.ingest.service import ingest_screenshot
 from memoria.knowledge.service import absorb_interpreted_screenshot
 from memoria.pipeline import mark_pipeline_run_completed
+from memoria.projections.service import refresh_assistant_context_projection
+from memoria.projections.service import refresh_topic_status_projection
 from memoria.storage.metadata_db import create_engine_with_sqlite_pragmas
 from memoria.vision.contracts import CandidateRef
 from memoria.vision.contracts import EntityMention
@@ -28,6 +31,12 @@ from memoria.vision.service import RunVisionStageCommand
 from memoria.vision.service import run_vision_stage
 from memoria.ocr.service import RunOcrStageCommand
 from memoria.ocr.service import run_ocr_stage
+
+
+CANONICAL_ONLY_SOURCE_TIME = datetime(2026, 4, 1, 9, 5, 0)
+OCR_ONLY_SOURCE_TIME = datetime(2026, 4, 2, 9, 5, 0)
+INTERPRETATION_ONLY_SOURCE_TIME = datetime(2026, 4, 3, 9, 5, 0)
+KNOWLEDGE_BACKED_SOURCE_TIME = datetime(2026, 4, 4, 9, 5, 0)
 
 
 @dataclass(frozen=True, slots=True)
@@ -156,6 +165,8 @@ def _seed_canonical_only(
                 connector_instance_id=connector_instance_id,
                 external_id=external_id,
                 blob_dir=tmp_path / "blobs",
+                source_created_at=CANONICAL_ONLY_SOURCE_TIME,
+                source_observed_at=CANONICAL_ONLY_SOURCE_TIME,
             ),
         )
         session.commit()
@@ -182,6 +193,8 @@ def _seed_ocr_only(
                 connector_instance_id=connector_instance_id,
                 external_id=external_id,
                 blob_dir=tmp_path / "blobs",
+                source_created_at=OCR_ONLY_SOURCE_TIME,
+                source_observed_at=OCR_ONLY_SOURCE_TIME,
             ),
         )
         run_ocr_stage(
@@ -217,6 +230,8 @@ def _seed_interpretation_only(
                 connector_instance_id=connector_instance_id,
                 external_id=external_id,
                 blob_dir=tmp_path / "blobs",
+                source_created_at=INTERPRETATION_ONLY_SOURCE_TIME,
+                source_observed_at=INTERPRETATION_ONLY_SOURCE_TIME,
             ),
         )
         run_ocr_stage(
@@ -260,6 +275,8 @@ def _seed_knowledge_backed(
                 connector_instance_id=connector_instance_id,
                 external_id=external_id,
                 blob_dir=tmp_path / "blobs",
+                source_created_at=KNOWLEDGE_BACKED_SOURCE_TIME,
+                source_observed_at=KNOWLEDGE_BACKED_SOURCE_TIME,
             ),
         )
         run_ocr_stage(
@@ -279,11 +296,16 @@ def _seed_knowledge_backed(
                 interpretation=_berlin_interpretation(),
             ),
         )
-        absorb_interpreted_screenshot(
+        touched_refs = absorb_interpreted_screenshot(
             session,
             pipeline_run_id=ingest_result.pipeline_run_id,
             source_item_id=ingest_result.source_item_id,
         )
+        assert touched_refs
+        for object_ref in touched_refs:
+            refresh_assistant_context_projection(session, object_ref=object_ref)
+            if object_ref.startswith("topic:"):
+                refresh_topic_status_projection(session, object_ref=object_ref)
         pipeline_run = session.get(PipelineRun, ingest_result.pipeline_run_id)
         assert pipeline_run is not None
         mark_pipeline_run_completed(session, pipeline_run)

@@ -64,6 +64,30 @@ class SemanticClusterItem:
     y: float
 
 
+@dataclass(frozen=True, slots=True)
+class SemanticMapPointEvidence:
+    claim_id: int
+    source_item_id: int
+    fragment_type: str
+    fragment_ref: str
+    support_role: str
+
+
+@dataclass(frozen=True, slots=True)
+class SemanticMapPointDetail:
+    source_item_id: int
+    x: float
+    y: float
+    cluster_key: str | None
+    semantic_summary: str | None
+    app_hint: str | None
+    created_at: datetime | None
+    observed_at: datetime | None
+    object_refs: list[str]
+    evidence: list[SemanticMapPointEvidence]
+    screenshot_detail_url: str
+
+
 def rebuild_semantic_map(session: Session, *, source_family: str) -> None:
     if source_family != "screenshot":
         raise ValueError("only screenshot source_family is supported")
@@ -140,6 +164,55 @@ def get_semantic_cluster(session: Session, *, cluster_key: str) -> SemanticClust
         dominant_apps=list(summary.get("dominant_apps") or []),
         time_start=_parse_datetime(summary.get("time_start")),
         time_end=_parse_datetime(summary.get("time_end")),
+    )
+
+
+def get_semantic_map_point(session: Session, *, source_item_id: int) -> SemanticMapPointDetail | None:
+    latest_map_run_id = session.scalar(
+        select(SemanticMapRun.id)
+        .where(SemanticMapRun.map_key == "screenshots_semantic_v1")
+        .order_by(SemanticMapRun.id.desc())
+    )
+    if latest_map_run_id is None:
+        return None
+
+    point = session.scalar(
+        select(SemanticMapPoint).where(
+            SemanticMapPoint.map_run_id == latest_map_run_id,
+            SemanticMapPoint.source_item_id == source_item_id,
+        )
+    )
+    if point is None:
+        return None
+
+    source_item = session.get(SourceItem, source_item_id)
+    interpretation = session.get(AssetInterpretation, source_item_id)
+    evidence_links = session.scalars(
+        select(KnowledgeEvidenceLink)
+        .where(KnowledgeEvidenceLink.source_item_id == source_item_id)
+        .order_by(KnowledgeEvidenceLink.id.asc())
+    ).all()
+    return SemanticMapPointDetail(
+        source_item_id=source_item_id,
+        x=point.x,
+        y=point.y,
+        cluster_key=point.cluster_key,
+        semantic_summary=None if interpretation is None else interpretation.semantic_summary,
+        app_hint=None if interpretation is None else interpretation.app_hint,
+        created_at=None if source_item is None else source_item.source_created_at,
+        observed_at=None if source_item is None else source_item.source_observed_at,
+        object_refs=_load_object_refs(session, source_item_id=source_item_id),
+        evidence=[
+            SemanticMapPointEvidence(
+                claim_id=link.claim_id,
+                source_item_id=link.source_item_id,
+                fragment_type=link.fragment_type,
+                fragment_ref=link.fragment_ref,
+                support_role=link.support_role,
+            )
+            for link in evidence_links
+        ],
+        screenshot_detail_url=f"/screenshots/{source_item_id}",
     )
 
 

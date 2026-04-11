@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from memoria.api.knowledge import create_knowledge_router
 from memoria.api.map import create_map_router
 from memoria.api.schemas import AssistantQueryRequest
 from memoria.api.schemas import IngestScreenshotRequest
@@ -46,6 +47,7 @@ def create_app(
     resolved_ocr_engine = ocr_engine or create_ocr_engine(settings)
     resolved_vision_engine = vision_engine or create_vision_engine(settings)
     app = FastAPI()
+    app.include_router(create_knowledge_router(engine=engine))
     app.include_router(create_screenshot_router(engine=engine))
     app.include_router(create_search_router(engine=engine))
     app.include_router(create_map_router(engine=engine))
