@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import json
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -140,7 +142,7 @@ def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
         cluster_key="cluster-a",
         x=-12.0,
         y=0.0,
-        vector=[1.0, 0.0],
+        vector=[0.2, 0.0],
         semantic_summary="Bridge candidate assigned to cluster A.",
         app_hint="telegram",
     )
@@ -149,7 +151,7 @@ def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
         cluster_key="cluster-a",
         x=-18.0,
         y=6.0,
-        vector=[0.8, 0.6],
+        vector=[0.0, 0.0],
         semantic_summary="Anchor screenshot for cluster A.",
         app_hint="telegram",
     )
@@ -158,7 +160,7 @@ def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
         cluster_key="cluster-b",
         x=16.0,
         y=0.0,
-        vector=[0.995, 0.1],
+        vector=[0.31, 0.0],
         semantic_summary="Anchor screenshot for cluster B.",
         app_hint="slack",
     )
@@ -236,15 +238,42 @@ def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
     }
 
 
-def test_rebuild_screenshot_atlas_uses_persisted_embedding_snapshot_vectors_and_metadata(
-    tmp_path, monkeypatch
+def test_rebuild_screenshot_atlas_uses_semantic_map_snapshot_metadata_when_embedding_rows_change(
+    tmp_path
 ):
     from memoria.atlas import projection
+    from memoria.domain.models import AtlasEdge
     from memoria.domain.models import AtlasRun
     from memoria.domain.models import Embedding
+    from memoria.domain.models import SemanticMapRun
 
     engine = create_test_engine(tmp_path, "atlas-snapshot-metadata.db")
     seeded = seed_atlas_dataset(engine, tmp_path)
+
+    with Session(engine) as session:
+        first = projection.rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+
+    with Session(engine) as session:
+        semantic_map_run = session.scalar(select(SemanticMapRun).order_by(SemanticMapRun.id.desc()))
+        assert semantic_map_run is not None
+        semantic_map_config = json.loads(semantic_map_run.config_json)
+        first_edges = {
+            (edge.source_region_key, edge.target_region_key): edge.weight
+            for edge in session.scalars(
+                select(AtlasEdge)
+                .where(
+                    AtlasEdge.atlas_run_id == int(first["atlas_run_id"]),
+                    AtlasEdge.edge_type == "semantic_similarity",
+                )
+                .order_by(AtlasEdge.source_region_key.asc(), AtlasEdge.target_region_key.asc())
+            ).all()
+        }
+
+    assert semantic_map_config["embedding_type"] == "screenshot_semantic_text"
+    assert semantic_map_config["embedding_model"] == "hashed-text-v1"
+    assert semantic_map_config["embedding_version"] == "96d-basis"
+    assert semantic_map_config["embedding_dimension"] == 96
 
     with Session(engine) as session:
         embedding_rows = session.scalars(
@@ -254,17 +283,12 @@ def test_rebuild_screenshot_atlas_uses_persisted_embedding_snapshot_vectors_and_
         ).all()
         assert embedding_rows
         for embedding_row in embedding_rows:
+            if embedding_row.source_item_id in seeded.travel_source_item_ids:
+                embedding_row.content_text = "travel snapshot drift " * 24
+            else:
+                embedding_row.content_text = "finance snapshot drift " * 24
             embedding_row.model_name = "snapshot-test-model"
         session.commit()
-
-    monkeypatch.setattr(
-        projection,
-        "embed_text",
-        lambda _text: (_ for _ in ()).throw(
-            AssertionError("atlas rebuild must not recompute vectors with embed_text")
-        ),
-        raising=False,
-    )
 
     with Session(engine) as session:
         result = projection.rebuild_screenshot_atlas(session, force=True)
@@ -272,8 +296,20 @@ def test_rebuild_screenshot_atlas_uses_persisted_embedding_snapshot_vectors_and_
 
     with Session(engine) as session:
         atlas_run = session.get(AtlasRun, int(result["atlas_run_id"]))
+        second_edges = {
+            (edge.source_region_key, edge.target_region_key): edge.weight
+            for edge in session.scalars(
+                select(AtlasEdge)
+                .where(
+                    AtlasEdge.atlas_run_id == int(result["atlas_run_id"]),
+                    AtlasEdge.edge_type == "semantic_similarity",
+                )
+                .order_by(AtlasEdge.source_region_key.asc(), AtlasEdge.target_region_key.asc())
+            ).all()
+        }
 
     assert atlas_run is not None
     assert atlas_run.embedding_type == "screenshot_semantic_text"
-    assert atlas_run.embedding_model == "snapshot-test-model"
+    assert atlas_run.embedding_model == "hashed-text-v1"
     assert atlas_run.embedding_version == "96d-basis"
+    assert second_edges == first_edges

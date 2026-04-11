@@ -11,13 +11,10 @@ from datetime import UTC
 from datetime import datetime
 from itertools import combinations
 from math import dist
-from struct import unpack
 from typing import Sequence
 
-from sqlalchemy import bindparam
 from sqlalchemy import func
 from sqlalchemy import select
-from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from memoria.atlas.contracts import AtlasCandidateItem
@@ -28,7 +25,6 @@ from memoria.domain.models import AtlasEdge
 from memoria.domain.models import AtlasItem
 from memoria.domain.models import AtlasRegion
 from memoria.domain.models import AtlasRun
-from memoria.domain.models import Embedding
 from memoria.domain.models import KnowledgeClaim
 from memoria.domain.models import KnowledgeEvidenceLink
 from memoria.domain.models import KnowledgeObject
@@ -78,15 +74,6 @@ class _SemanticRegionSource:
     time_start: datetime | None
     time_end: datetime | None
     items: list[_AtlasPoint]
-
-
-@dataclass(frozen=True, slots=True)
-class _EmbeddingSnapshot:
-    source_item_id: int
-    embedding_type: str
-    model_name: str
-    dimension: int
-    vector: list[float]
 
 
 @dataclass(slots=True)
@@ -344,6 +331,7 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
         .where(SemanticCluster.map_run_id == map_run.id)
         .order_by(SemanticCluster.id.asc())
     ).all()
+    embedding_type, embedding_model, embedding_version = _load_semantic_map_snapshot_metadata(map_run)
 
     map_points = session.scalars(
         select(SemanticMapPoint)
@@ -359,21 +347,14 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
         session,
         source_item_ids=source_item_ids,
     )
-    embedding_snapshots = _load_embedding_snapshots(
-        session,
-        source_item_ids=source_item_ids,
-    )
-    embedding_type, embedding_model, embedding_version = _resolve_embedding_snapshot_metadata(
-        embedding_snapshots.values()
-    )
+    signal_scale = _signal_scale(clusters=clusters, points=map_points)
 
     points_by_id: dict[int, _AtlasPoint] = {}
     grouped_points: dict[str, list[_AtlasPoint]] = defaultdict(list)
     for point in map_points:
         interpretation = session.get(AssetInterpretation, point.source_item_id)
         source_item = session.get(SourceItem, point.source_item_id)
-        embedding_snapshot = embedding_snapshots.get(point.source_item_id)
-        if interpretation is None or source_item is None or embedding_snapshot is None or point.cluster_key is None:
+        if interpretation is None or source_item is None or point.cluster_key is None:
             continue
 
         atlas_point = _AtlasPoint(
@@ -381,7 +362,7 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
             cluster_key=point.cluster_key,
             x=point.x,
             y=point.y,
-            vector=embedding_snapshot.vector,
+            vector=_signal_vector(x=point.x, y=point.y, scale=signal_scale),
             semantic_summary=interpretation.semantic_summary,
             app_hint=interpretation.app_hint,
             observed_at=source_item.source_observed_at or source_item.source_created_at,
@@ -448,7 +429,7 @@ def _load_prior_region_identities(
     identities: list[PriorRegionIdentity] = []
     for region in prior_regions:
         source_item_ids = source_ids_by_region_key.get(region.region_key, set())
-        centroid = _normalized_average(
+        centroid = _mean_vector(
             [points_by_id[source_item_id].vector for source_item_id in sorted(source_item_ids) if source_item_id in points_by_id]
         )
         if not centroid:
@@ -474,7 +455,7 @@ def _build_top_regions(
     top_regions: list[_AtlasRegionDraft] = []
     for region_source in latest_map_run.regions:
         current_source_item_ids = {item.source_item_id for item in region_source.items}
-        centroid_vector = _normalized_average([item.vector for item in region_source.items])
+        centroid_vector = _mean_vector([item.vector for item in region_source.items])
         top_summary = _summarize_points(region_source.items, fallback_title=region_source.title)
         region_key = match_region_identity(
             prior_regions=prior_region_identities,
@@ -553,7 +534,7 @@ def _build_subregions(
             chunk,
             fallback_title=f"{parent_region_key} / {index + 1}",
         )
-        centroid_vector = _normalized_average([item.vector for item in chunk])
+        centroid_vector = _mean_vector([item.vector for item in chunk])
         chunk_x = round(sum(item.x for item in chunk) / len(chunk), 3)
         chunk_y = round(sum(item.y for item in chunk) / len(chunk), 3)
         subregion_key = f"{parent_region_key}/subregion-{index + 1:02d}"
@@ -644,7 +625,7 @@ def _build_edge_drafts(
 
     for left_region, right_region in combinations(sorted(top_regions, key=lambda region: region.region_key), 2):
         semantic_weight = round(
-            max(0.0, _cosine_similarity(left_region.centroid_vector, right_region.centroid_vector)),
+            _signal_similarity(left_region.centroid_vector, right_region.centroid_vector),
             6,
         )
         edge_drafts.append(
@@ -851,7 +832,7 @@ def _classify_point_bridge(
 
     secondary_candidates = sorted(
         (
-            (1.0 - _cosine_similarity(point.vector, centroid), region_key)
+            (_signal_distance(point.vector, centroid), region_key)
             for region_key, centroid in region_centroids.items()
             if region_key != primary_region_key
         ),
@@ -860,7 +841,7 @@ def _classify_point_bridge(
     if not secondary_candidates:
         return None
 
-    primary_distance = 1.0 - _cosine_similarity(point.vector, primary_centroid)
+    primary_distance = _signal_distance(point.vector, primary_centroid)
     secondary_distance, secondary_region_key = secondary_candidates[0]
     return classify_bridge(
         primary_region_key=primary_region_key,
@@ -871,98 +852,42 @@ def _classify_point_bridge(
     )
 
 
-def _load_embedding_snapshots(
-    session: Session,
+def _load_semantic_map_snapshot_metadata(map_run: SemanticMapRun) -> tuple[str, str, str]:
+    config = json.loads(map_run.config_json or "{}")
+    embedding_type = str(config.get("embedding_type") or ATLAS_EMBEDDING_TYPE)
+    embedding_model = str(config.get("embedding_model") or "unknown")
+    raw_dimension = config.get("embedding_dimension")
+    dimension = int(raw_dimension) if raw_dimension is not None else 0
+    raw_version = config.get("embedding_version")
+    if isinstance(raw_version, str) and raw_version:
+        embedding_version = raw_version
+    elif dimension > 0:
+        embedding_version = _embedding_version_from_dimension(dimension)
+    else:
+        embedding_version = "unknown"
+    return embedding_type, embedding_model, embedding_version
+
+
+def _signal_scale(
     *,
-    source_item_ids: list[int],
-) -> dict[int, _EmbeddingSnapshot]:
-    if not source_item_ids:
-        return {}
-
-    embedding_rows = session.scalars(
-        select(Embedding)
-        .where(
-            Embedding.source_item_id.in_(source_item_ids),
-            Embedding.embedding_type == ATLAS_EMBEDDING_TYPE,
-        )
-        .order_by(Embedding.source_item_id.asc(), Embedding.id.asc())
-    ).all()
-    if not embedding_rows:
-        raise RuntimeError("semantic map snapshot is missing persisted screenshot embeddings")
-
-    embedding_row_by_source_item_id: dict[int, Embedding] = {}
-    for embedding_row in embedding_rows:
-        if embedding_row.source_item_id is None or embedding_row.source_item_id in embedding_row_by_source_item_id:
-            continue
-        embedding_row_by_source_item_id[embedding_row.source_item_id] = embedding_row
-
-    missing_source_item_ids = sorted(set(source_item_ids) - set(embedding_row_by_source_item_id))
-    if missing_source_item_ids:
-        raise RuntimeError(
-            "semantic map snapshot is missing persisted screenshot embeddings for source items: "
-            + ", ".join(str(source_item_id) for source_item_id in missing_source_item_ids)
-        )
-
-    raw_vectors = session.execute(
-        text(
-            "select embedding_id, embedding "
-            "from embedding_vec_items "
-            "where embedding_id in :embedding_ids"
-        ).bindparams(bindparam("embedding_ids", expanding=True)),
-        {"embedding_ids": sorted(embedding_row.id for embedding_row in embedding_row_by_source_item_id.values())},
-    ).all()
-    raw_vector_by_embedding_id = {
-        int(embedding_id): bytes(raw_vector)
-        for embedding_id, raw_vector in raw_vectors
-    }
-
-    missing_vector_ids = sorted(
-        embedding_row.id
-        for embedding_row in embedding_row_by_source_item_id.values()
-        if embedding_row.id not in raw_vector_by_embedding_id
-    )
-    if missing_vector_ids:
-        raise RuntimeError(
-            "semantic map snapshot is missing persisted embedding vectors for embedding ids: "
-            + ", ".join(str(embedding_id) for embedding_id in missing_vector_ids)
-        )
-
-    snapshots: dict[int, _EmbeddingSnapshot] = {}
-    for source_item_id, embedding_row in embedding_row_by_source_item_id.items():
-        snapshots[source_item_id] = _EmbeddingSnapshot(
-            source_item_id=source_item_id,
-            embedding_type=embedding_row.embedding_type,
-            model_name=embedding_row.model_name,
-            dimension=embedding_row.dimension,
-            vector=_deserialize_float32_vector(
-                raw_vector_by_embedding_id[embedding_row.id],
-                dimension=embedding_row.dimension,
-            ),
-        )
-    return snapshots
+    clusters: Sequence[SemanticCluster],
+    points: Sequence[SemanticMapPoint],
+) -> float:
+    coordinate_candidates = [
+        abs(cluster.centroid_x)
+        for cluster in clusters
+    ]
+    coordinate_candidates.extend(abs(cluster.centroid_y) for cluster in clusters)
+    coordinate_candidates.extend(abs(point.x) for point in points)
+    coordinate_candidates.extend(abs(point.y) for point in points)
+    return max(coordinate_candidates, default=1.0) or 1.0
 
 
-def _resolve_embedding_snapshot_metadata(
-    embedding_snapshots: Sequence[_EmbeddingSnapshot],
-) -> tuple[str, str, str]:
-    embedding_types = sorted({snapshot.embedding_type for snapshot in embedding_snapshots})
-    model_names = sorted({snapshot.model_name for snapshot in embedding_snapshots})
-    dimensions = sorted({snapshot.dimension for snapshot in embedding_snapshots})
-    if len(embedding_types) != 1 or len(model_names) != 1 or len(dimensions) != 1:
-        raise RuntimeError(
-            "semantic map snapshot embedding metadata is inconsistent across source items"
-        )
-    dimension = dimensions[0]
-    return embedding_types[0], model_names[0], _embedding_version_from_dimension(dimension)
-
-
-def _deserialize_float32_vector(raw_vector: bytes, *, dimension: int) -> list[float]:
-    expected_size = dimension * 4
-    if len(raw_vector) != expected_size:
-        raise RuntimeError(
-            f"persisted embedding vector size {len(raw_vector)} does not match dimension {dimension}"
-        )
-    return list(unpack(f"{dimension}f", raw_vector))
+def _signal_vector(*, x: float, y: float, scale: float) -> list[float]:
+    return [
+        round(x / scale, 6),
+        round(y / scale, 6),
+    ]
 
 
 def _build_region_shape(
@@ -1128,7 +1053,7 @@ def _tokenize_strings(values: list[str]) -> set[str]:
 def _cohesion_score(points: list[_AtlasPoint], centroid_vector: list[float]) -> float:
     if not points or not centroid_vector:
         return 0.0
-    similarities = [_cosine_similarity(point.vector, centroid_vector) for point in points]
+    similarities = [_signal_similarity(point.vector, centroid_vector) for point in points]
     return round(sum(similarities) / len(similarities), 6)
 
 
@@ -1178,7 +1103,7 @@ def _duplicate_preference_key(
     )
 
 
-def _normalized_average(vectors: list[list[float]]) -> list[float]:
+def _mean_vector(vectors: list[list[float]]) -> list[float]:
     if not vectors:
         return []
 
@@ -1186,14 +1111,15 @@ def _normalized_average(vectors: list[list[float]]) -> list[float]:
     for vector in vectors:
         for index, value in enumerate(vector):
             summed[index] += value
-    magnitude = math.sqrt(sum(value * value for value in summed))
-    if magnitude == 0.0:
-        return [0.0] * len(summed)
-    return [value / magnitude for value in summed]
+    return [value / len(vectors) for value in summed]
 
 
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    return sum(a * b for a, b in zip(left, right))
+def _signal_distance(left: list[float], right: list[float]) -> float:
+    return math.sqrt(sum((left_value - right_value) ** 2 for left_value, right_value in zip(left, right)))
+
+
+def _signal_similarity(left: list[float], right: list[float]) -> float:
+    return 1.0 / (1.0 + _signal_distance(left, right))
 
 
 def _parse_datetime(raw_value: object) -> datetime | None:
