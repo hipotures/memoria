@@ -212,7 +212,7 @@ export default function App() {
     if (!subregionStillVisible) {
       setEvidenceData(null);
       setLongTailOffset(0);
-      dispatch({ type: "breadcrumbs.region" });
+      dispatch({ type: "subregion.invalidated" });
     }
   }, [
     atlasState.selectedSubregionKey,
@@ -380,7 +380,7 @@ export default function App() {
   };
 
   const handleDrillSubregion = (subregionKey?: string) => {
-    const nextSubregionKey = subregionKey ?? atlasState.selectedSubregionKey;
+    const nextSubregionKey = subregionKey ?? selectedSubregion?.region_key ?? null;
     if (nextSubregionKey === null) {
       return;
     }
@@ -460,7 +460,7 @@ export default function App() {
         return;
       }
 
-      if (atlasState.level === "region" && atlasState.selectedSubregionKey !== null) {
+      if (atlasState.level === "region" && selectedSubregion !== null) {
         event.preventDefault();
         handleDrillSubregion();
       }
@@ -473,7 +473,7 @@ export default function App() {
   }, [
     atlasState.level,
     atlasState.selectedRegionKey,
-    atlasState.selectedSubregionKey,
+    selectedSubregion,
   ]);
 
   const canPreviousEvidencePage =

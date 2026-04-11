@@ -113,4 +113,26 @@ describe("atlasReducer", () => {
       selectedItemId: null,
     });
   });
+
+  it("can invalidate a stale subregion target without resetting the selected region", () => {
+    const regionState = atlasReducer(initialAtlasState, {
+      type: "region.drilled",
+      regionKey: "region-a",
+    });
+    const selectedLane = atlasReducer(regionState, {
+      type: "subregion.selected",
+      subregionKey: "region-a/subregion-2",
+    });
+
+    const invalidated = atlasReducer(selectedLane, {
+      type: "subregion.invalidated",
+    });
+
+    expect(invalidated).toEqual({
+      level: "region",
+      selectedRegionKey: "region-a",
+      selectedSubregionKey: null,
+      selectedItemId: null,
+    });
+  });
 });

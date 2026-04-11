@@ -136,6 +136,51 @@ describe("App", () => {
     await waitForText(container, "Evidence stack");
   });
 
+  it("clears stale subregion targets before Enter can drill a filtered-out lane", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      findButton("Travel Planning", container).click();
+    });
+
+    await waitForText(container, "2 representative screenshots");
+
+    act(() => {
+      findButton("Enter region", container).click();
+    });
+
+    await waitForText(container, "Packing lane");
+
+    act(() => {
+      findButton("Packing lane", container).click();
+    });
+
+    await flush();
+    expect(findButton("Open evidence", container).disabled).toBe(false);
+
+    act(() => {
+      changeInput(findInput("Search atlas", container), "prune");
+    });
+
+    act(() => {
+      findButton("Apply filters", container).click();
+    });
+
+    await flush();
+
+    expect(findButton("Open evidence", container).disabled).toBe(true);
+
+    act(() => {
+      pressEnter(document.body);
+    });
+
+    await flush();
+
+    expect(container.textContent).not.toContain("Evidence stack");
+    expect(requestPaths(fetchMock)).not.toContain("/atlas/evidence");
+  });
+
   it("sends backend search state through overview, region detail, and evidence requests", async () => {
     await renderApp(root);
     await waitForText(container, "Atlas overview");
@@ -404,7 +449,8 @@ function jsonResponse(payload: unknown) {
 
 function buildOverviewPayload(url: URL) {
   const searchQuery = url.searchParams.get("search_query");
-  const filteredMatchCount = searchQuery === "hotel" ? 3 : searchQuery === "void" ? 0 : 8;
+  const filteredMatchCount =
+    searchQuery === "hotel" ? 3 : searchQuery === "void" ? 0 : searchQuery === "prune" ? 2 : 8;
 
   return {
     atlas_run: buildAtlasRun(),
@@ -424,7 +470,10 @@ function buildOverviewPayload(url: URL) {
         title: "Finance Review",
         x: 220,
         y: -40,
-        overlay: { match_count: searchQuery === "hotel" || searchQuery === "void" ? 0 : 2 },
+        overlay: {
+          match_count:
+            searchQuery === "hotel" || searchQuery === "void" || searchQuery === "prune" ? 0 : 2,
+        },
         top_apps: ["slack"],
         top_labels: ["budget review"],
         top_entities: ["topic:month-end-close"],
@@ -444,6 +493,56 @@ function buildOverviewPayload(url: URL) {
 
 function buildRegionDetailPayload(url: URL) {
   const searchQuery = url.searchParams.get("search_query");
+  const subregions =
+    searchQuery === "prune"
+      ? [
+          buildRegion({
+            region_key: "region-travel/subregion-1",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Trip booking lane",
+            x: -110,
+            y: -20,
+            overlay: { match_count: 2 },
+            top_labels: ["arrival logistics"],
+            top_apps: ["maps"],
+            top_people: ["person:alice"],
+            top_entities: ["task:plan-arrival"],
+            time_start: "2026-03-02T08:00:00Z",
+            time_end: "2026-03-04T11:00:00Z",
+          }),
+        ]
+      : [
+          buildRegion({
+            region_key: "region-travel/subregion-1",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Trip booking lane",
+            x: -110,
+            y: -20,
+            overlay: {
+              match_count: searchQuery === "hotel" ? 1 : searchQuery === "void" ? 0 : 5,
+            },
+            top_labels: ["arrival logistics"],
+            top_apps: ["maps"],
+            top_people: ["person:alice"],
+            top_entities: ["task:plan-arrival"],
+            time_start: "2026-03-02T08:00:00Z",
+            time_end: "2026-03-04T11:00:00Z",
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-2",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Packing lane",
+            x: 120,
+            y: 35,
+            overlay: { match_count: searchQuery === "hotel" || searchQuery === "void" ? 0 : 3 },
+            top_labels: ["packing"],
+            top_apps: ["notes"],
+            top_entities: ["task:review-final-checklist"],
+          }),
+        ];
 
   return {
     atlas_run: buildAtlasRun(),
@@ -455,35 +554,7 @@ function buildRegionDetailPayload(url: URL) {
       top_labels: ["travel planning", "itinerary"],
       top_entities: ["topic:trip-to-berlin"],
     }),
-    subregions: [
-      buildRegion({
-        region_key: "region-travel/subregion-1",
-        parent_region_key: "region-travel",
-        level: 1,
-        title: "Trip booking lane",
-        x: -110,
-        y: -20,
-        overlay: { match_count: searchQuery === "hotel" ? 1 : searchQuery === "void" ? 0 : 5 },
-        top_labels: ["arrival logistics"],
-        top_apps: ["maps"],
-        top_people: ["person:alice"],
-        top_entities: ["task:plan-arrival"],
-        time_start: "2026-03-02T08:00:00Z",
-        time_end: "2026-03-04T11:00:00Z",
-      }),
-      buildRegion({
-        region_key: "region-travel/subregion-2",
-        parent_region_key: "region-travel",
-        level: 1,
-        title: "Packing lane",
-        x: 120,
-        y: 35,
-        overlay: { match_count: searchQuery === "hotel" || searchQuery === "void" ? 0 : 3 },
-        top_labels: ["packing"],
-        top_apps: ["notes"],
-        top_entities: ["task:review-final-checklist"],
-      }),
-    ],
+    subregions,
     representatives:
       searchQuery === "hotel"
         ? [
