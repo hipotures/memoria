@@ -6,6 +6,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
 
+from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
@@ -255,7 +256,23 @@ def reconcile_pipeline_runs(session: Session) -> dict[str, int]:
     return {"completed": completed, "failed": failed}
 
 
-def rebuild_screenshot_derived_data(session: Session) -> dict[str, int]:
+def count_running_screenshot_pipeline_runs(session: Session) -> int:
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(PipelineRun)
+            .join(SourceItem, SourceItem.id == PipelineRun.source_item_id)
+            .where(PipelineRun.status == "running", SourceItem.source_family == "screenshot")
+        )
+        or 0
+    )
+
+
+def rebuild_screenshot_derived_data(session: Session, *, force: bool = False) -> dict[str, int]:
+    active_runs = count_running_screenshot_pipeline_runs(session)
+    if active_runs > 0 and not force:
+        raise RuntimeError(f"active screenshot pipeline runs: {active_runs}")
+
     absorbed = 0
     projections = 0
     interpretation_rows = session.scalars(

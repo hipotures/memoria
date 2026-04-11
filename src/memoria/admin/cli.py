@@ -36,7 +36,8 @@ def main(argv: list[str] | None = None) -> int:
     diagnose_parser.add_argument("--source-item-id", required=True, type=int)
 
     subparsers.add_parser("reconcile-pipeline-runs")
-    subparsers.add_parser("rebuild-screenshot-derived-data")
+    rebuild_parser = subparsers.add_parser("rebuild-screenshot-derived-data")
+    rebuild_parser.add_argument("--force", action="store_true")
 
     import_parser = subparsers.add_parser("import-screenshots")
     import_parser.add_argument("--input-dir", required=True, type=Path)
@@ -101,7 +102,7 @@ def main(argv: list[str] | None = None) -> int:
                 payload = reconcile_pipeline_runs(session)
                 session.commit()
             else:
-                payload = rebuild_screenshot_derived_data(session)
+                payload = rebuild_screenshot_derived_data(session, force=args.force)
                 session.commit()
 
     print(json.dumps(payload, sort_keys=True, indent=2))
