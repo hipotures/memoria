@@ -10,6 +10,7 @@ import {
   atlasRegionDisplayDomainMax,
   atlasRegionDisplayLabel,
 } from "./displayCounts";
+import { clearPixiContainer } from "./pixiCleanup";
 
 type AtlasCanvasProps = {
   level: AtlasLevel;
@@ -254,7 +255,7 @@ function drawScene(
 ) {
   const { Container, Graphics, Text, TextStyle } = pixi;
   const stage = app.stage;
-  stage.removeChildren();
+  clearPixiContainer(stage);
   const secondaryLabelStyle = new TextStyle(SECONDARY_LABEL_STYLE_OPTIONS);
 
   const width = app.renderer.width || 800;

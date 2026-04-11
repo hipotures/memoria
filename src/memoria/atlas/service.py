@@ -851,7 +851,8 @@ def _build_atlas_filter_clauses(filters: AtlasFilters) -> list[object]:
     if filters.connector_instance_id is not None:
         clauses.append(AtlasItem.connector_instance_id == filters.connector_instance_id)
     if filters.app_hint is not None:
-        clauses.append(AtlasItem.app_hint == filters.app_hint)
+        normalized_app_hint = filters.app_hint.strip().lower()
+        clauses.append(func.lower(AtlasItem.app_hint) == normalized_app_hint)
     if filters.screen_category is not None:
         clauses.append(AtlasItem.screen_category == filters.screen_category)
     if filters.has_knowledge is True:

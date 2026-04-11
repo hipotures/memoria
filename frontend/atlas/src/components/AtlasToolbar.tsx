@@ -47,7 +47,7 @@ export function AtlasToolbar({
           <span>Search atlas</span>
           <input
             type="search"
-            placeholder="Filter visible labels, regions, and evidence"
+            placeholder="Search summaries, app names, and linked refs"
             value={draft.searchText}
             onChange={(event) => onDraftChange({ searchText: event.currentTarget.value })}
           />

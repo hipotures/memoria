@@ -58,6 +58,18 @@ def test_get_atlas_region_detail_returns_subregions_and_representatives(tmp_path
     assert all(item["app_hint"] == "telegram" for item in payload["representatives"])
 
 
+def test_get_atlas_overview_matches_app_hint_case_insensitively(tmp_path):
+    client, engine = create_test_client(tmp_path, "atlas-overview-app-case.db")
+    fixture = _seed_atlas_api_fixture(engine, tmp_path)
+
+    response = client.get("/atlas/overview", params={"app_hint": "Telegram"})
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["active_filters"]["app_hint"] == "Telegram"
+    assert _region_overlay_match_count(payload, fixture.region_key) == 2
+
+
 def test_get_atlas_overview_applies_search_query_to_region_overlays(tmp_path):
     client, engine = create_test_client(tmp_path, "atlas-overview-search.db")
     fixture = _seed_atlas_api_fixture(engine, tmp_path)
