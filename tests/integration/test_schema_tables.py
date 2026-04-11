@@ -27,6 +27,10 @@ def test_initial_schema_includes_screenshot_knowledge_core_tables(tmp_path):
         ).fetchall()
 
     assert {
+        "atlas_edges",
+        "atlas_items",
+        "atlas_regions",
+        "atlas_runs",
         "blobs",
         "source_items",
         "source_payloads_screenshot",
