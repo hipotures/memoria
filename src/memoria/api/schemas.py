@@ -286,3 +286,136 @@ class SemanticClusterItemResponse(BaseModel):
 class SemanticClusterItemsResponse(BaseModel):
     cluster_key: str
     items: list[SemanticClusterItemResponse]
+
+
+class ScreenshotReadFiltersResponse(BaseModel):
+    connector_instance_id: str | None
+    app_hint: str | None
+    screen_category: str | None
+    has_knowledge: bool | None
+    observed_from: datetime | None
+    observed_to: datetime | None
+
+
+class AtlasRunResponse(BaseModel):
+    atlas_run_id: int
+    atlas_key: str
+    status: str
+    source_count: int
+    source_snapshot_id: str | None
+    corpus_hash: str | None
+    embedding_type: str
+    embedding_model: str
+    embedding_version: str
+    clustering_method: str
+    clustering_params: dict[str, Any]
+    random_seed: int
+    layout_version: str
+    generated_at: datetime
+    completed_at: datetime | None
+    published_at: datetime | None
+
+
+class AtlasOverlayResponse(BaseModel):
+    match_count: int
+
+
+class AtlasRepresentativeRefResponse(BaseModel):
+    rank: int
+    source_item_id: int
+
+
+class AtlasBridgeNeighborResponse(BaseModel):
+    edge_type: str
+    region_key: str
+    weight: float
+
+
+class AtlasRegionResponse(BaseModel):
+    atlas_run_id: int
+    region_key: str
+    parent_region_key: str | None
+    level: int
+    title: str
+    x: float
+    y: float
+    label_x: float
+    label_y: float
+    region_shape: dict[str, Any]
+    item_count: int
+    top_labels: list[str]
+    top_apps: list[str]
+    top_people: list[str]
+    top_entities: list[str]
+    time_start: datetime | None
+    time_end: datetime | None
+    representatives: list[AtlasRepresentativeRefResponse]
+    bridge_neighbors: list[AtlasBridgeNeighborResponse]
+    cohesion_score: float
+    overlay: AtlasOverlayResponse
+
+
+class AtlasEdgeResponse(BaseModel):
+    source_region_key: str
+    target_region_key: str
+    weight: float
+    edge_type: str
+
+
+class AtlasItemResponse(BaseModel):
+    source_item_id: int
+    region_key: str
+    subregion_key: str | None
+    x: float
+    y: float
+    semantic_summary: str | None
+    app_hint: str | None
+    observed_at: datetime | None
+    object_refs: list[str]
+    is_representative: bool
+    representative_rank: int | None
+    is_bridge: bool
+    bridge_type: str | None
+    secondary_region_key: str | None
+    bridge_score: float
+    screenshot_detail_url: str | None
+
+
+class AtlasItemPageResponse(BaseModel):
+    items: list[AtlasItemResponse]
+    limit: int
+    offset: int
+    total: int
+
+
+class AtlasEvidenceSectionTotalsResponse(BaseModel):
+    representatives: int
+    bridges: int
+    long_tail: int
+
+
+class AtlasOverviewResponse(BaseModel):
+    atlas_run: AtlasRunResponse | None
+    regions: list[AtlasRegionResponse]
+    edges: list[AtlasEdgeResponse]
+    active_filters: ScreenshotReadFiltersResponse
+
+
+class AtlasRegionDetailResponse(BaseModel):
+    atlas_run: AtlasRunResponse
+    region: AtlasRegionResponse
+    subregions: list[AtlasRegionResponse]
+    representatives: list[AtlasItemResponse]
+    active_filters: ScreenshotReadFiltersResponse
+
+
+class AtlasEvidenceSliceResponse(BaseModel):
+    atlas_run: AtlasRunResponse
+    region_key: str
+    subregion_key: str | None
+    sort: str
+    representatives: list[AtlasItemResponse]
+    bridges: list[AtlasItemResponse]
+    long_tail_page: AtlasItemPageResponse
+    section_totals: AtlasEvidenceSectionTotalsResponse
+    active_filters: ScreenshotReadFiltersResponse
