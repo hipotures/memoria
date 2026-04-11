@@ -148,7 +148,7 @@ def _duplicate_preference_key(
     medoid_distances: dict[int, float],
 ) -> tuple[float, float, int]:
     return (
-        -item.metadata_score,
         medoid_distances[item.source_item_id],
+        -item.metadata_score,
         item.source_item_id,
     )

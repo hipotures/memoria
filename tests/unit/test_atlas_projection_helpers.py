@@ -39,13 +39,30 @@ def test_select_representatives_skips_near_duplicates_deterministically() -> Non
     ranked = select_representatives(
         [
             AtlasCandidateItem(9, [0.1, 0.0], "shared summary", "telegram", ["thread:berlin"], 2),
-            AtlasCandidateItem(7, [0.11, 0.0], "shared summary", "telegram", ["thread:berlin"], 1),
+            AtlasCandidateItem(7, [0.1, 0.0], "shared summary", "telegram", ["thread:berlin"], 1),
             AtlasCandidateItem(12, [0.2, 0.0], "other summary", "telegram", ["thread:rome"], 1),
         ],
         limit=3,
     )
 
     assert [item.source_item_id for item in ranked] == [9, 12]
+
+
+def test_select_representatives_keeps_better_medoid_duplicate_over_metadata_rich_outlier() -> None:
+    ranked = select_representatives(
+        [
+            AtlasCandidateItem(20, [0.0, 0.0], "shared summary", "telegram", ["thread:berlin"], 1),
+            AtlasCandidateItem(21, [2.0, 0.0], "shared summary", "telegram", ["thread:berlin"], 3),
+            AtlasCandidateItem(22, [0.05, 0.0], "other summary", "telegram", ["thread:rome"], 1),
+            AtlasCandidateItem(23, [0.1, 0.0], "another summary", None, [], 0),
+        ],
+        limit=3,
+    )
+
+    representative_ids = {item.source_item_id for item in ranked}
+
+    assert 20 in representative_ids
+    assert 21 not in representative_ids
 
 
 def test_classify_bridge_marks_small_primary_secondary_margin() -> None:
