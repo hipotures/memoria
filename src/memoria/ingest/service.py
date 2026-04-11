@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import dataclass
+from dataclasses import field
+from datetime import UTC
 from datetime import datetime
 from hashlib import sha256
 from pathlib import Path
@@ -37,9 +40,11 @@ class IngestScreenshotResult:
     pipeline_run_id: int
     dedup_key: str
     storage_uri: str
+    is_duplicate: bool = field(compare=False)
 
 
 def ingest_screenshot(session: Session, command: IngestScreenshotCommand) -> IngestScreenshotResult:
+    resolved_created_at, resolved_observed_at = _resolve_source_times(command)
     digest = sha256(command.content).hexdigest()
     dedup_key = f"screenshot:{digest}"
     existing_source_item = session.scalar(
@@ -61,6 +66,7 @@ def ingest_screenshot(session: Session, command: IngestScreenshotCommand) -> Ing
             pipeline_run_id=existing_pipeline_run.id,
             dedup_key=existing_source_item.dedup_key,
             storage_uri=blob.storage_uri,
+            is_duplicate=True,
         )
 
     blob = session.scalar(select(Blob).where(Blob.sha256 == digest))
@@ -86,8 +92,8 @@ def ingest_screenshot(session: Session, command: IngestScreenshotCommand) -> Ing
         dedup_key=dedup_key,
         mode=command.mode,
         status="ingested",
-        source_created_at=command.source_created_at,
-        source_observed_at=command.source_observed_at,
+        source_created_at=resolved_created_at,
+        source_observed_at=resolved_observed_at,
         raw_ref=command.filename,
         blob_id=blob.id,
     )
@@ -133,6 +139,7 @@ def ingest_screenshot(session: Session, command: IngestScreenshotCommand) -> Ing
         pipeline_run_id=pipeline_run.id,
         dedup_key=source_item.dedup_key,
         storage_uri=str(storage_uri),
+        is_duplicate=False,
     )
 
 
@@ -145,3 +152,30 @@ def _persist_blob(blob_dir: Path, digest: str, filename: str, content: bytes) ->
         blob_path.write_bytes(content)
 
     return blob_path.resolve()
+
+
+_SCREENSHOT_FILENAME_TIMESTAMP_RE = re.compile(
+    r"^Screenshot_(?P<date>\d{8})_(?P<time>\d{6})(?:_.+)?$"
+)
+
+
+def _resolve_source_times(command: IngestScreenshotCommand) -> tuple[datetime, datetime]:
+    parsed_timestamp = _parse_screenshot_timestamp_from_filename(command.filename)
+    created_at = command.source_created_at or parsed_timestamp or _utc_now()
+    observed_at = command.source_observed_at or command.source_created_at or parsed_timestamp or created_at
+    return created_at, observed_at
+
+
+def _parse_screenshot_timestamp_from_filename(filename: str) -> datetime | None:
+    match = _SCREENSHOT_FILENAME_TIMESTAMP_RE.match(Path(filename).stem)
+    if match is None:
+        return None
+
+    return datetime.strptime(
+        f"{match.group('date')}{match.group('time')}",
+        "%Y%m%d%H%M%S",
+    )
+
+
+def _utc_now() -> datetime:
+    return datetime.now(UTC).replace(tzinfo=None)

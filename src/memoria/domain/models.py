@@ -120,7 +120,34 @@ class AssetInterpretation(Base):
     topic_candidates_json: Mapped[str] = mapped_column(Text)
     task_candidates_json: Mapped[str] = mapped_column(Text)
     person_candidates_json: Mapped[str] = mapped_column(Text)
+    entity_mentions_json: Mapped[str] = mapped_column(Text, default="[]")
+    searchable_labels_json: Mapped[str] = mapped_column(Text, default="[]")
+    cluster_hints_json: Mapped[str] = mapped_column(Text, default="[]")
     confidence_json: Mapped[str] = mapped_column(Text)
+    raw_model_payload_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class Embedding(Base):
+    __tablename__ = "embeddings"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    source_item_id: Mapped[int | None] = mapped_column(
+        ForeignKey("source_items.id", ondelete="CASCADE"),
+        index=True,
+        nullable=True,
+    )
+    object_ref: Mapped[str | None] = mapped_column(String(255), index=True, nullable=True)
+    embedding_type: Mapped[str] = mapped_column(String(64))
+    model_name: Mapped[str] = mapped_column(String(128))
+    content_text: Mapped[str] = mapped_column(Text)
+    dimension: Mapped[int] = mapped_column(Integer)
     created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
     updated_at: Mapped[datetime] = mapped_column(
         DateTime(),
@@ -204,6 +231,68 @@ class Projection(Base):
     projection_type: Mapped[str] = mapped_column(String(64))
     content_json: Mapped[str] = mapped_column(Text)
     updated_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
+
+
+class SemanticMapRun(Base):
+    __tablename__ = "semantic_map_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    map_key: Mapped[str] = mapped_column(String(64), index=True)
+    source_family: Mapped[str] = mapped_column(String(32), index=True)
+    source_count: Mapped[int] = mapped_column(Integer)
+    config_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
+
+
+class SemanticCluster(Base):
+    __tablename__ = "semantic_clusters"
+    __table_args__ = (
+        UniqueConstraint("map_run_id", "cluster_key", name="uq_semantic_cluster_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    map_run_id: Mapped[int] = mapped_column(
+        ForeignKey("semantic_map_runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    cluster_key: Mapped[str] = mapped_column(String(128))
+    title: Mapped[str] = mapped_column(String(255))
+    summary_json: Mapped[str] = mapped_column(Text, default="{}")
+    centroid_x: Mapped[float] = mapped_column(Float, default=0.0)
+    centroid_y: Mapped[float] = mapped_column(Float, default=0.0)
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(),
+        server_default=func.now(),
+        onupdate=func.now(),
+        nullable=False,
+    )
+
+
+class SemanticMapPoint(Base):
+    __tablename__ = "semantic_map_points"
+    __table_args__ = (
+        UniqueConstraint(
+            "map_run_id",
+            "source_item_id",
+            name="uq_semantic_map_point_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    map_run_id: Mapped[int] = mapped_column(
+        ForeignKey("semantic_map_runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    source_item_id: Mapped[int] = mapped_column(
+        ForeignKey("source_items.id", ondelete="CASCADE"),
+        index=True,
+    )
+    cluster_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    x: Mapped[float] = mapped_column(Float, default=0.0)
+    y: Mapped[float] = mapped_column(Float, default=0.0)
+    score_json: Mapped[str] = mapped_column(Text, default="{}")
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
 
 
 class PipelineRun(Base):

@@ -74,7 +74,11 @@ class ScreenshotInterpretationPayload:
     topic_candidates: list[dict[str, Any]]
     task_candidates: list[dict[str, Any]]
     person_candidates: list[dict[str, Any]]
+    entity_mentions: list[dict[str, Any]]
+    searchable_labels: list[str]
+    cluster_hints: list[str]
     confidence: dict[str, Any]
+    raw_model_payload: dict[str, Any]
     created_at: datetime
     updated_at: datetime
 

@@ -311,7 +311,6 @@ def test_run_vision_stage_rejects_mismatched_pipeline_run_and_source_item(tmp_pa
 def test_execute_vision_stage_runs_engine_and_persists_interpretation(tmp_path):
     from memoria.ocr.service import RunOcrStageCommand
     from memoria.ocr.service import run_ocr_stage
-    from memoria.vision.engines import CategoryLabel
     from memoria.vision.engines import VisionEngineResult
     from memoria.vision.service import ExecuteVisionStageCommand
     from memoria.vision.service import execute_vision_stage
@@ -361,16 +360,34 @@ def test_execute_vision_stage_runs_engine_and_persists_interpretation(tmp_path):
         ):
             return VisionEngineResult(
                 engine_name="fake-vision",
-                summary_pl=ocr_text,
-                summary_en=ocr_text,
-                categories=[
-                    CategoryLabel(pl="chat", en="chat"),
-                    CategoryLabel(pl="travel", en="travel"),
-                    CategoryLabel(pl="task", en="task"),
-                    CategoryLabel(pl="reminder", en="reminder"),
-                    CategoryLabel(pl="assistant", en="assistant"),
-                ],
+                screen_category="chat",
+                semantic_summary=ocr_text,
                 app_hint="telegram",
+                topic_candidates=[
+                    {
+                        "slug": "trip-to-berlin",
+                        "title": "Trip to Berlin",
+                        "confidence": 0.95,
+                    }
+                ],
+                task_candidates=[
+                    {
+                        "slug": "book-train",
+                        "title": "Book train",
+                        "confidence": 0.89,
+                    }
+                ],
+                person_candidates=[
+                    {
+                        "slug": "alice",
+                        "title": "Alice",
+                        "confidence": 0.62,
+                    }
+                ],
+                searchable_labels=["telegram", "berlin", "train"],
+                cluster_hints=["travel", "chat"],
+                confidence={"screen_category": 0.91, "topic_candidates": 0.95},
+                raw_model_payload={"semantic_summary": ocr_text},
             )
 
     with Session(engine) as session:

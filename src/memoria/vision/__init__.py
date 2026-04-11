@@ -1,6 +1,6 @@
 from memoria.vision.contracts import CandidateRef
+from memoria.vision.contracts import EntityMention
 from memoria.vision.contracts import VisionInterpretation
-from memoria.vision.engines import CategoryLabel
 from memoria.vision.engines import OllamaVisionEngine
 from memoria.vision.engines import OpenAICompatibleVisionEngine
 from memoria.vision.engines import VisionEngine
@@ -13,7 +13,7 @@ from memoria.vision.service import run_vision_stage
 
 __all__ = [
     "CandidateRef",
-    "CategoryLabel",
+    "EntityMention",
     "ExecuteVisionStageCommand",
     "OllamaVisionEngine",
     "OpenAICompatibleVisionEngine",

@@ -10,10 +10,17 @@ from sqlalchemy.orm import Session
 
 from memoria.domain.models import AssetInterpretation
 from memoria.domain.models import ContentFragment
+from memoria.domain.models import Embedding
 from memoria.domain.models import PipelineRun
 from memoria.domain.models import StageResult
+from memoria.domain.models import SourcePayloadScreenshot
 from memoria.pipeline import mark_pipeline_run_failed
 from memoria.pipeline import record_stage_result
+from memoria.search.embeddings import EMBEDDING_DIMENSION
+from memoria.search.embeddings import EMBEDDING_MODEL_NAME
+from memoria.search.embeddings import build_embedding_text_for_screenshot
+from memoria.search.embeddings import embed_text
+from memoria.search.embeddings import upsert_embedding
 from memoria.vision.contracts import VisionInterpretation
 from memoria.vision.engines import VisionEngine
 from memoria.vision.engines import extract_app_hint_from_filename
@@ -58,7 +65,11 @@ def run_vision_stage(session: Session, command: RunVisionStageCommand) -> None:
             topic_candidates_json=_serialize_candidates(payload.topic_candidates),
             task_candidates_json=_serialize_candidates(payload.task_candidates),
             person_candidates_json=_serialize_candidates(payload.person_candidates),
+            entity_mentions_json=_serialize_mentions(payload.entity_mentions),
+            searchable_labels_json=json.dumps(payload.searchable_labels, sort_keys=True),
+            cluster_hints_json=json.dumps(payload.cluster_hints, sort_keys=True),
             confidence_json=json.dumps(payload.confidence, sort_keys=True),
+            raw_model_payload_json=json.dumps(payload.raw_model_payload, sort_keys=True),
         )
         session.add(interpretation_row)
     else:
@@ -68,7 +79,11 @@ def run_vision_stage(session: Session, command: RunVisionStageCommand) -> None:
         interpretation_row.topic_candidates_json = _serialize_candidates(payload.topic_candidates)
         interpretation_row.task_candidates_json = _serialize_candidates(payload.task_candidates)
         interpretation_row.person_candidates_json = _serialize_candidates(payload.person_candidates)
+        interpretation_row.entity_mentions_json = _serialize_mentions(payload.entity_mentions)
+        interpretation_row.searchable_labels_json = json.dumps(payload.searchable_labels, sort_keys=True)
+        interpretation_row.cluster_hints_json = json.dumps(payload.cluster_hints, sort_keys=True)
         interpretation_row.confidence_json = json.dumps(payload.confidence, sort_keys=True)
+        interpretation_row.raw_model_payload_json = json.dumps(payload.raw_model_payload, sort_keys=True)
         session.add(interpretation_row)
 
     _upsert_fragment(
@@ -93,6 +108,52 @@ def run_vision_stage(session: Session, command: RunVisionStageCommand) -> None:
             source_item_id=command.source_item_id,
             fragment_type="app_hint",
             fragment_ref="detected_app",
+        )
+
+    _replace_string_fragments(
+        session,
+        source_item_id=command.source_item_id,
+        fragment_type="searchable_label",
+        values=payload.searchable_labels,
+    )
+    _replace_string_fragments(
+        session,
+        source_item_id=command.source_item_id,
+        fragment_type="cluster_hint",
+        values=payload.cluster_hints,
+    )
+    _replace_entity_fragments(
+        session,
+        source_item_id=command.source_item_id,
+        interpretation=payload,
+    )
+
+    ocr_row_text = session.scalar(
+        select(ContentFragment.fragment_text).where(
+            ContentFragment.source_item_id == command.source_item_id,
+            ContentFragment.fragment_type == "ocr_text",
+            ContentFragment.fragment_ref == "full_text",
+        )
+    ) or ""
+    screenshot_payload = session.get(SourcePayloadScreenshot, command.source_item_id)
+    if screenshot_payload is not None:
+        embedding_text = build_embedding_text_for_screenshot(
+            filename=screenshot_payload.original_filename,
+            screen_category=payload.screen_category,
+            semantic_summary=payload.semantic_summary,
+            app_hint=payload.app_hint,
+            searchable_labels=payload.searchable_labels,
+            cluster_hints=payload.cluster_hints,
+            entity_mentions=[mention.text for mention in payload.entity_mentions],
+            ocr_text=ocr_row_text,
+        )
+        upsert_embedding(
+            session,
+            source_item_id=command.source_item_id,
+            embedding_type="screenshot_semantic_text",
+            model_name=EMBEDDING_MODEL_NAME,
+            content_text=embedding_text,
+            vector=embed_text(embedding_text),
         )
 
     session.flush()
@@ -162,6 +223,10 @@ def _serialize_candidates(candidates: list[object]) -> str:
     return json.dumps([asdict(candidate) for candidate in candidates], sort_keys=True)
 
 
+def _serialize_mentions(mentions: list[object]) -> str:
+    return json.dumps([asdict(mention) for mention in mentions], sort_keys=True)
+
+
 def _upsert_fragment(
     session: Session,
     *,
@@ -208,6 +273,68 @@ def _delete_fragment(
     )
     if fragment is not None:
         session.delete(fragment)
+
+
+def _replace_string_fragments(
+    session: Session,
+    *,
+    source_item_id: int,
+    fragment_type: str,
+    values: list[str],
+) -> None:
+    existing_fragments = session.scalars(
+        select(ContentFragment).where(
+            ContentFragment.source_item_id == source_item_id,
+            ContentFragment.fragment_type == fragment_type,
+        )
+    ).all()
+    existing_by_ref = {fragment.fragment_ref: fragment for fragment in existing_fragments}
+    desired_refs = {f"{fragment_type}:{index}" for index, _ in enumerate(values)}
+
+    for fragment_ref, fragment in existing_by_ref.items():
+        if fragment_ref not in desired_refs:
+            session.delete(fragment)
+
+    for index, value in enumerate(values):
+        _upsert_fragment(
+            session,
+            source_item_id=source_item_id,
+            fragment_type=fragment_type,
+            fragment_ref=f"{fragment_type}:{index}",
+            fragment_text=value,
+        )
+
+
+def _replace_entity_fragments(
+    session: Session,
+    *,
+    source_item_id: int,
+    interpretation: VisionInterpretation,
+) -> None:
+    existing_fragments = session.scalars(
+        select(ContentFragment).where(
+            ContentFragment.source_item_id == source_item_id,
+            ContentFragment.fragment_type == "entity_mention",
+        )
+    ).all()
+    existing_by_ref = {fragment.fragment_ref: fragment for fragment in existing_fragments}
+    desired_refs = {
+        f"{mention.type}:{mention.text.lower()}"
+        for mention in interpretation.entity_mentions
+    }
+
+    for fragment_ref, fragment in existing_by_ref.items():
+        if fragment_ref not in desired_refs:
+            session.delete(fragment)
+
+    for mention in interpretation.entity_mentions:
+        _upsert_fragment(
+            session,
+            source_item_id=source_item_id,
+            fragment_type="entity_mention",
+            fragment_ref=f"{mention.type}:{mention.text.lower()}",
+            fragment_text=mention.text,
+        )
 
 
 def _record_failed_vision_stage(

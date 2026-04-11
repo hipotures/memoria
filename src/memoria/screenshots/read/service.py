@@ -317,7 +317,11 @@ def _serialize_interpretation_payload(
         topic_candidates=_json_loads_or_default(interpretation_row.topic_candidates_json, default=[]),
         task_candidates=_json_loads_or_default(interpretation_row.task_candidates_json, default=[]),
         person_candidates=_json_loads_or_default(interpretation_row.person_candidates_json, default=[]),
+        entity_mentions=_json_loads_or_default(interpretation_row.entity_mentions_json, default=[]),
+        searchable_labels=_json_loads_or_default(interpretation_row.searchable_labels_json, default=[]),
+        cluster_hints=_json_loads_or_default(interpretation_row.cluster_hints_json, default=[]),
         confidence=_json_loads_or_default(interpretation_row.confidence_json, default={}),
+        raw_model_payload=_json_loads_or_default(interpretation_row.raw_model_payload_json, default={}),
         created_at=interpretation_row.created_at,
         updated_at=interpretation_row.updated_at,
     )

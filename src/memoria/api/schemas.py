@@ -11,6 +11,9 @@ class IngestScreenshotRequest(BaseModel):
     content_base64: str
     external_id: str | None = None
     ocr_text: str | None = None
+    mode: str = "absorb"
+    source_created_at: datetime | None = None
+    source_observed_at: datetime | None = None
 
 
 class AssistantQueryRequest(BaseModel):
@@ -62,7 +65,11 @@ class ScreenshotInterpretationResponse(BaseModel):
     topic_candidates: list[dict[str, Any]]
     task_candidates: list[dict[str, Any]]
     person_candidates: list[dict[str, Any]]
+    entity_mentions: list[dict[str, Any]]
+    searchable_labels: list[str]
+    cluster_hints: list[str]
     confidence: dict[str, Any]
+    raw_model_payload: dict[str, Any]
     created_at: datetime
     updated_at: datetime
 
@@ -143,3 +150,64 @@ class ScreenshotSearchResponse(BaseModel):
     items: list[ScreenshotSearchHitResponse]
     limit: int
     offset: int
+
+
+class HybridSearchHitResponse(BaseModel):
+    source_item_id: int
+    filename: str
+    semantic_summary: str | None
+    app_hint: str | None
+    object_refs: list[str]
+    match_sources: list[str]
+    score: float
+    cluster_key: str | None
+
+
+class HybridSearchResponse(BaseModel):
+    query: str
+    items: list[HybridSearchHitResponse]
+    limit: int
+    offset: int
+
+
+class SemanticMapClusterResponse(BaseModel):
+    cluster_key: str
+    title: str
+    x: float
+    y: float
+    item_count: int
+    top_labels: list[str]
+    dominant_apps: list[str]
+    time_start: datetime | None
+    time_end: datetime | None
+
+
+class SemanticMapResponse(BaseModel):
+    map_key: str
+    generated_at: datetime | None
+    clusters: list[SemanticMapClusterResponse]
+
+
+class SemanticClusterDetailResponse(BaseModel):
+    cluster_key: str
+    title: str
+    item_count: int
+    top_labels: list[str]
+    dominant_apps: list[str]
+    time_start: datetime | None
+    time_end: datetime | None
+
+
+class SemanticClusterItemResponse(BaseModel):
+    source_item_id: int
+    filename: str
+    semantic_summary: str | None
+    app_hint: str | None
+    object_refs: list[str]
+    x: float
+    y: float
+
+
+class SemanticClusterItemsResponse(BaseModel):
+    cluster_key: str
+    items: list[SemanticClusterItemResponse]

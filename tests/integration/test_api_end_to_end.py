@@ -13,7 +13,6 @@ from sqlalchemy.orm import Session
 from memoria.domain.models import PipelineRun
 from memoria.domain.models import SourceItem
 from memoria.storage.metadata_db import create_engine_with_sqlite_pragmas
-from memoria.vision.engines import CategoryLabel
 from memoria.vision.engines import VisionEngineResult
 
 
@@ -112,6 +111,57 @@ def test_api_can_use_database_url_from_runtime_settings_when_not_passed_explicit
     )
 
     assert ingest_response.status_code == 201
+
+
+def test_api_ingest_accepts_index_only_mode_and_explicit_source_times(tmp_path):
+    from fastapi.testclient import TestClient
+
+    from memoria.api.app import create_app
+
+    database_path = tmp_path / "api-index-only.db"
+    config = Config(str(Path(__file__).resolve().parents[2] / "alembic.ini"))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+
+    app = create_app(
+        database_url=f"sqlite:///{database_path}",
+        blob_dir=tmp_path / "blobs",
+        ocr_engine=_FakeOcrEngine(),
+        vision_engine=_FakeVisionEngine(),
+    )
+    client = TestClient(app)
+
+    ingest_response = client.post(
+        "/ingest",
+        json={
+            "filename": "Screenshot_20230204_201912_TikTok.jpg",
+            "media_type": "image/jpeg",
+            "connector_instance_id": "manual-upload",
+            "content_base64": b64encode(b"index only screenshot bytes").decode("ascii"),
+            "mode": "index_only",
+            "source_created_at": "2023-02-04T20:19:12",
+            "source_observed_at": "2023-02-04T20:19:12",
+            "ocr_text": "LIVE TikTok Q&A screenshot",
+        },
+    )
+
+    assert ingest_response.status_code == 201
+
+    with Session(_create_engine_for_existing_db(tmp_path, "api-index-only.db")) as session:
+        source_item = session.get(SourceItem, ingest_response.json()["source_item_id"])
+        pipeline_run = session.scalar(
+            select(PipelineRun)
+            .where(PipelineRun.source_item_id == ingest_response.json()["source_item_id"])
+            .order_by(PipelineRun.id.desc())
+        )
+
+    assert source_item is not None
+    assert source_item.mode == "index_only"
+    assert source_item.source_created_at.isoformat() == "2023-02-04T20:19:12"
+    assert source_item.source_observed_at.isoformat() == "2023-02-04T20:19:12"
+    assert pipeline_run is not None
+    assert pipeline_run.status == "completed"
+    assert pipeline_run.finished_at is not None
 
 
 def test_api_duplicate_ingest_with_same_bytes_stays_idempotent(tmp_path):
@@ -524,21 +574,42 @@ class _FakeVisionEngine:
         category = "chat" if has_chat_signal else "generic"
         app_hint = "telegram" if has_chat_signal else None
         summary = ocr_text or "generic screenshot"
-        secondary_category = (
-            CategoryLabel(pl="travel", en="travel")
-            if "train" in lower_text
-            else CategoryLabel(pl="ui", en="ui")
-        )
+        topic_candidates = []
+        task_candidates = []
+        person_candidates = []
+        searchable_labels = []
+        cluster_hints = []
+
+        if "berlin" in lower_text:
+            topic_candidates.append(
+                {"slug": "trip-to-berlin", "title": "Trip to Berlin", "confidence": 0.95}
+            )
+            searchable_labels.append("berlin")
+            cluster_hints.append("travel")
+        if "book train" in lower_text or "train tickets" in lower_text:
+            task_candidates.append(
+                {"slug": "book-train", "title": "Book train", "confidence": 0.89}
+            )
+            searchable_labels.append("train")
+        if has_chat_signal:
+            person_candidates.append({"slug": "alice", "title": "Alice", "confidence": 0.62})
+            searchable_labels.append("telegram")
+            cluster_hints.append("chat")
+
         return VisionEngineResult(
             engine_name="fake-vision",
-            summary_pl=summary,
-            summary_en=summary,
-            categories=[
-                CategoryLabel(pl=category, en=category),
-                secondary_category,
-                CategoryLabel(pl="task", en="task"),
-                CategoryLabel(pl="reminder", en="reminder"),
-                CategoryLabel(pl="assistant", en="assistant"),
-            ],
+            screen_category=category,
+            semantic_summary=summary,
             app_hint=app_hint,
+            topic_candidates=topic_candidates,
+            task_candidates=task_candidates,
+            person_candidates=person_candidates,
+            searchable_labels=searchable_labels,
+            cluster_hints=cluster_hints,
+            confidence={
+                "screen_category": 0.9 if has_chat_signal else 0.4,
+                "topic_candidates": 0.95 if topic_candidates else 0.0,
+                "task_candidates": 0.89 if task_candidates else 0.0,
+            },
+            raw_model_payload={"semantic_summary": summary},
         )

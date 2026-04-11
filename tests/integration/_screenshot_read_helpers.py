@@ -22,6 +22,7 @@ from memoria.knowledge.service import absorb_interpreted_screenshot
 from memoria.pipeline import mark_pipeline_run_completed
 from memoria.storage.metadata_db import create_engine_with_sqlite_pragmas
 from memoria.vision.contracts import CandidateRef
+from memoria.vision.contracts import EntityMention
 from memoria.vision.contracts import VisionInterpretation
 from memoria.vision.service import RunVisionStageCommand
 from memoria.vision.service import run_vision_stage
@@ -316,7 +317,20 @@ def _berlin_interpretation() -> VisionInterpretation:
                 confidence=0.62,
             )
         ],
+        entity_mentions=[
+            EntityMention(
+                type="person",
+                text="Alice",
+                confidence=0.62,
+            )
+        ],
+        searchable_labels=["berlin", "telegram", "train tickets"],
+        cluster_hints=["travel planning", "telegram chat"],
         confidence={"screen_category": 0.91, "semantic_summary": 0.85},
+        raw_model_payload={
+            "screen_category": "chat",
+            "semantic_summary": "Telegram chat about a Berlin trip with Alice and booking train tickets.",
+        },
     )
 
 

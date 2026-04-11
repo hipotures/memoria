@@ -164,3 +164,41 @@ def test_ingest_screenshot_is_idempotent_for_duplicate_content_without_orphan_bl
     assert stage_result_count == 1
     assert len(written_files) == 1
     assert written_files[0].read_bytes() == payload
+
+
+def test_ingest_screenshot_derives_source_times_from_filename_and_preserves_index_only_mode(tmp_path):
+    from memoria.ingest.service import IngestScreenshotCommand
+    from memoria.ingest.service import ingest_screenshot
+
+    database_path = tmp_path / "ingest-derived-time.db"
+    blob_dir = tmp_path / "blobs"
+    alembic_ini = Path(__file__).resolve().parents[2] / "alembic.ini"
+
+    config = Config(str(alembic_ini))
+    config.set_main_option("sqlalchemy.url", f"sqlite:///{database_path}")
+    command.upgrade(config, "head")
+
+    engine = create_engine_with_sqlite_pragmas(f"sqlite:///{database_path}")
+
+    with Session(engine) as session:
+        ingest_result = ingest_screenshot(
+            session,
+            IngestScreenshotCommand(
+                filename="Screenshot_20230204_201912_TikTok.jpg",
+                media_type="image/jpeg",
+                content=b"derived source time screenshot",
+                connector_instance_id="manual-upload",
+                external_id="tiktok-live",
+                blob_dir=blob_dir,
+                mode="index_only",
+            ),
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        source_item = session.get(SourceItem, ingest_result.source_item_id)
+
+    assert source_item is not None
+    assert source_item.mode == "index_only"
+    assert source_item.source_created_at == datetime(2023, 2, 4, 20, 19, 12)
+    assert source_item.source_observed_at == datetime(2023, 2, 4, 20, 19, 12)

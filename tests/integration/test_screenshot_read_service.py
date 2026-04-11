@@ -125,6 +125,9 @@ def test_get_screenshot_detail_returns_knowledge_backed_metadata(tmp_path):
         "ocr_text",
         "scene_description",
         "app_hint",
+        "entity_mention",
+        "searchable_label",
+        "cluster_hint",
     }
 
 
@@ -184,7 +187,7 @@ def test_list_screenshots_returns_recent_rows_with_filters_and_object_refs(tmp_p
     assert "Finance" in result.items[2].ocr_excerpt
 
 
-def test_search_screenshots_prefers_ocr_hits_and_deduplicates_per_source_item(tmp_path, monkeypatch):
+def test_search_screenshots_returns_semantic_label_hits_and_deduplicates_per_source_item(tmp_path, monkeypatch):
     from memoria.screenshots.read import service as screenshot_read_service
 
     engine = create_test_engine(tmp_path, "screenshot-read-search.db")
@@ -202,8 +205,8 @@ def test_search_screenshots_prefers_ocr_hits_and_deduplicates_per_source_item(tm
         seeded.interpretation_only_source_item_id,
         seeded.knowledge_backed_source_item_id,
     ]
-    assert all(item.match_source == "ocr_text" for item in berlin_result.items)
-    assert all("Berlin" in item.match_text for item in berlin_result.items)
+    assert all(item.match_source == "searchable_label" for item in berlin_result.items)
+    assert all(item.match_text == "berlin" for item in berlin_result.items)
 
     monkeypatch.setattr(
         screenshot_read_service,

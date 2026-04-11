@@ -6,6 +6,7 @@ from alembic import context
 from sqlalchemy import engine_from_config, pool
 
 from memoria.domain.models import Base
+from memoria.storage.metadata_db import configure_sqlite_connection
 
 config = context.config
 
@@ -36,6 +37,8 @@ def run_migrations_online() -> None:
     )
 
     with connectable.connect() as connection:
+        if str(connection.engine.url).startswith("sqlite"):
+            configure_sqlite_connection(connection.connection.dbapi_connection)
         context.configure(connection=connection, target_metadata=target_metadata)
 
         with context.begin_transaction():

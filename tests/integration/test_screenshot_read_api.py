@@ -55,6 +55,19 @@ def test_get_screenshot_detail_returns_partial_and_knowledge_backed_views_withou
     knowledge_payload = knowledge_response.json()
     assert knowledge_payload["source_item_id"] == seeded.knowledge_backed_source_item_id
     assert knowledge_payload["interpretation"]["app_hint"] == "telegram"
+    assert knowledge_payload["interpretation"]["entity_mentions"] == [
+        {"type": "person", "text": "Alice", "confidence": 0.62}
+    ]
+    assert knowledge_payload["interpretation"]["searchable_labels"] == [
+        "berlin",
+        "telegram",
+        "train tickets",
+    ]
+    assert knowledge_payload["interpretation"]["cluster_hints"] == [
+        "travel planning",
+        "telegram chat",
+    ]
+    assert knowledge_payload["interpretation"]["raw_model_payload"]["screen_category"] == "chat"
     assert "topic:trip-to-berlin" in knowledge_payload["knowledge"]["object_refs"]
     assert knowledge_payload["blob"]["download_url"] == (
         f"/screenshots/{seeded.knowledge_backed_source_item_id}/blob"
@@ -100,5 +113,6 @@ def test_get_screenshots_search_returns_screenshot_centric_hits_without_side_eff
         seeded.interpretation_only_source_item_id,
         seeded.knowledge_backed_source_item_id,
     ]
-    assert all(item["match_source"] == "ocr_text" for item in payload["items"])
+    assert all(item["match_source"] == "searchable_label" for item in payload["items"])
+    assert all(item["match_text"] == "berlin" for item in payload["items"])
     assert after_counts == before_counts
