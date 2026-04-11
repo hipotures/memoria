@@ -395,6 +395,8 @@ The embedding text is already constructed by `build_embedding_text_for_screensho
 
 This means the first atlas version is anchored to the same embedding basis already used by screenshot semantic search and the current semantic map. Future upgrades may replace the embedding model, but MVP should not split the semantic stack into multiple competing screenshot embeddings.
 
+`hashed-text-v1` should be treated as an MVP decision, not a permanent semantic commitment. It is the first candidate for replacement if atlas quality, separation, representative quality, or bridge quality proves insufficient in real usage.
+
 ---
 
 ## 11. Heuristics
@@ -515,6 +517,33 @@ Rules:
 
 This contract allows stable animated transitions across levels because the browser does not need to reinterpret multiple coordinate systems.
 
+### 11.7 Persisted Projection vs Request-Scoped Counts
+
+The atlas projection should distinguish persisted structural fields from request-scoped fields derived under active filters or search.
+
+Persisted projection fields include:
+
+- region identity and hierarchy;
+- stable coordinates;
+- region shapes;
+- representative membership;
+- bridge membership;
+- region and item metadata that belongs to the atlas run itself.
+
+Request-scoped fields include:
+
+- `match_count`;
+- filter hit counts;
+- search hit counts;
+- section totals under the current filter context.
+
+Rules:
+
+- request-scoped counts must not be stored back into atlas projection tables as canonical atlas state;
+- persisted counts such as total `item_count` belong to the atlas run;
+- filtered counts should be computed at read time against the selected atlas run and active filters;
+- APIs should make it obvious which fields are structural projection data and which fields are request-scoped overlays.
+
 ---
 
 ## 12. Atlas Data Model
@@ -525,8 +554,12 @@ Represents one reproducible atlas build.
 
 Fields:
 
+- `atlas_run_id`
 - `atlas_key`
+- `status`
 - `generated_at`
+- `completed_at`
+- `published_at` optional
 - `source_count`
 - `layout_version`
 - `embedding_type`
@@ -537,12 +570,20 @@ Fields:
 - `random_seed`
 - `source_snapshot_id` or `corpus_hash`
 
+Lifecycle notes:
+
+- `status` should distinguish at least `building`, `completed`, and `failed`;
+- `completed_at` marks a fully built atlas run;
+- `published_at` marks a run that is safe for readers to treat as current;
+- readers should default to the latest published run, not merely the most recently started run.
+
 ### 12.2 `AtlasRegion`
 
 Represents either a top-level region or a subregion.
 
 Fields:
 
+- `atlas_run_id`
 - `region_key`
 - `parent_region_key`
 - `level`
@@ -552,7 +593,6 @@ Fields:
 - `region_shape`
 - `label_anchor`
 - `item_count`
-- `match_count`
 - `top_labels`
 - `top_apps`
 - `top_people` optional
@@ -566,12 +606,18 @@ Fields:
 `level=0` represents a top-level region.
 `level=1` represents a subregion.
 
+Notes:
+
+- `item_count` is a persisted projection field for the atlas run;
+- `match_count` is request-scoped and should be returned separately in read payload overlays rather than persisted inside `AtlasRegion`.
+
 ### 12.3 `AtlasItem`
 
 Represents a screenshot evidence point at level 2.
 
 Fields:
 
+- `atlas_run_id`
 - `source_item_id`
 - `region_key`
 - `subregion_key`
@@ -595,6 +641,7 @@ Represents sparse region-to-region adjacency.
 
 Fields:
 
+- `atlas_run_id`
 - `source_region_key`
 - `target_region_key`
 - `weight`
@@ -619,6 +666,7 @@ Should contain:
 - `AtlasRun` metadata;
 - top-level `AtlasRegion` records;
 - sparse `AtlasEdge` records;
+- request-scoped region overlays such as `match_count`;
 - global filter/facet summaries;
 - active filter echo.
 
@@ -634,6 +682,7 @@ Should contain:
 - active parent region;
 - child subregions;
 - local bridge neighbors;
+- request-scoped region overlays such as `match_count`;
 - representative items;
 - dock summary and facet summaries;
 - active filter echo.
@@ -652,7 +701,7 @@ Should contain:
 - `bridges`: a bounded list of bridge `AtlasItem` records;
 - `long_tail_page`: paginated non-representative, non-bridge `AtlasItem` records;
 - sort metadata;
-- total counts for each section;
+- request-scoped totals for each section;
 - active filter echo.
 
 This split is intentional. Representatives, bridges, and the paginated long tail should not be flattened into one undifferentiated list in the API contract. `long_tail_page` should exclude items already surfaced in `representatives` or `bridges`.
