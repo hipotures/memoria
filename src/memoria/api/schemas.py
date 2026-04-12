@@ -429,3 +429,52 @@ class AtlasEvidenceSliceResponse(BaseModel):
     long_tail_page: AtlasItemPageResponse
     section_totals: AtlasEvidenceSectionTotalsResponse
     active_filters: AtlasFiltersResponse
+
+
+class SimilarityGraphFiltersResponse(AtlasFiltersResponse):
+    min_cluster_size: int
+    min_edge_weight: float
+
+
+class SimilarityGraphRunResponse(BaseModel):
+    atlas_run_id: int
+    atlas_key: str
+    generated_at: datetime
+    source_count: int
+
+
+class SimilarityGraphNodeResponse(BaseModel):
+    region_key: str
+    title: str
+    x: float
+    y: float
+    size: float
+    item_count: int
+    dominant_screen_category: str
+    top_labels: list[str]
+    top_apps: list[str]
+    top_entities: list[str]
+    is_labeled: bool
+    representative_source_item_ids: list[int]
+
+
+class SimilarityGraphEdgeResponse(BaseModel):
+    source_region_key: str
+    target_region_key: str
+    weight: float
+    support: int
+    reason: str
+
+
+class SimilarityGraphLegendEntryResponse(BaseModel):
+    category: str
+    color: str
+    count: int
+
+
+class SimilarityGraphResponse(BaseModel):
+    run: SimilarityGraphRunResponse | None
+    nodes: list[SimilarityGraphNodeResponse]
+    edges: list[SimilarityGraphEdgeResponse]
+    legend: list[SimilarityGraphLegendEntryResponse]
+    filters: SimilarityGraphFiltersResponse
