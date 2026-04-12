@@ -5,8 +5,8 @@ import math
 from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
+import re
 
-from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -20,6 +20,8 @@ from memoria.domain.models import AtlasRun
 
 _DEFAULT_CATEGORY = "unknown"
 _REASON_SHARED_TOPIC_TASK_SIGNATURE = "shared_topic_task_signature"
+_MAX_METADATA_VALUES = 5
+_SUMMARY_TOKEN_PATTERN = re.compile(r"[a-z0-9]{3,}")
 _CATEGORY_COLORS = {
     "chat": "#6EC5FF",
     "finance": "#F4B942",
@@ -84,6 +86,16 @@ class SimilarityGraph:
     filters: SimilarityGraphFilters
 
 
+@dataclass(frozen=True, slots=True)
+class _RegionSliceStats:
+    item_count: int
+    dominant_screen_category: str
+    top_labels: list[str]
+    top_apps: list[str]
+    top_entities: list[str]
+    representative_source_item_ids: list[int]
+
+
 def get_similarity_graph(
     session: Session,
     *,
@@ -117,6 +129,7 @@ def get_similarity_graph(
         session,
         atlas_run_id=atlas_run.id,
         region_keys=region_keys,
+        filters=resolved_filters,
         min_edge_weight=resolved_filters.min_edge_weight,
     )
     return SimilarityGraph(
@@ -134,10 +147,16 @@ def _resolve_filters(
     min_cluster_size: int | None,
     min_edge_weight: float | None,
 ) -> SimilarityGraphFilters:
+    resolved_min_cluster_size = min_cluster_size if min_cluster_size is not None else (
+        filters.min_cluster_size if filters is not None else 1
+    )
+    resolved_min_edge_weight = min_edge_weight if min_edge_weight is not None else (
+        filters.min_edge_weight if filters is not None else 0.0
+    )
     if filters is None:
         return SimilarityGraphFilters(
-            min_cluster_size=max(1, min_cluster_size or 1),
-            min_edge_weight=max(0.0, min_edge_weight or 0.0),
+            min_cluster_size=max(0, resolved_min_cluster_size),
+            min_edge_weight=max(0.0, resolved_min_edge_weight),
         )
     return SimilarityGraphFilters(
         connector_instance_id=filters.connector_instance_id,
@@ -147,8 +166,8 @@ def _resolve_filters(
         observed_from=filters.observed_from,
         observed_to=filters.observed_to,
         search_query=filters.search_query,
-        min_cluster_size=max(1, min_cluster_size or filters.min_cluster_size),
-        min_edge_weight=max(0.0, min_edge_weight or filters.min_edge_weight),
+        min_cluster_size=max(0, resolved_min_cluster_size),
+        min_edge_weight=max(0.0, resolved_min_edge_weight),
     )
 
 
@@ -158,15 +177,15 @@ def _load_similarity_nodes(
     atlas_run_id: int,
     filters: SimilarityGraphFilters,
 ) -> list[SimilarityGraphNode]:
-    region_match_counts = _matching_region_counts(
+    region_slice_stats = _load_region_slice_stats(
         session,
         atlas_run_id=atlas_run_id,
         filters=filters,
     )
     included_region_keys = [
         region_key
-        for region_key, item_count in sorted(region_match_counts.items())
-        if item_count >= filters.min_cluster_size
+        for region_key, stats in sorted(region_slice_stats.items())
+        if stats.item_count >= filters.min_cluster_size
     ]
     if not included_region_keys:
         return []
@@ -188,46 +207,105 @@ def _load_similarity_nodes(
             title=row.title,
             x=row.x,
             y=row.y,
-            size=_node_size(region_match_counts[row.region_key]),
-            item_count=region_match_counts[row.region_key],
-            dominant_screen_category=_dominant_screen_category(
-                session,
-                atlas_run_id,
-                row.region_key,
-                filters=filters,
-            ),
-            top_labels=_json_string_list(row.top_labels_json),
-            top_apps=_json_string_list(row.top_apps_json),
-            top_entities=_json_string_list(row.top_entities_json),
+            size=_node_size(region_slice_stats[row.region_key].item_count),
+            item_count=region_slice_stats[row.region_key].item_count,
+            dominant_screen_category=region_slice_stats[row.region_key].dominant_screen_category,
+            top_labels=region_slice_stats[row.region_key].top_labels,
+            top_apps=region_slice_stats[row.region_key].top_apps,
+            top_entities=region_slice_stats[row.region_key].top_entities,
             is_labeled=bool(row.title.strip()),
-            representative_source_item_ids=_representative_source_item_ids(row.representatives_json),
+            representative_source_item_ids=region_slice_stats[row.region_key].representative_source_item_ids,
         )
         for row in rows
     ]
 
 
-def _matching_region_counts(
+def _load_region_slice_stats(
     session: Session,
     *,
     atlas_run_id: int,
     filters: SimilarityGraphFilters,
-) -> dict[str, int]:
+) -> dict[str, _RegionSliceStats]:
+    rows = _load_filtered_items(
+        session,
+        atlas_run_id=atlas_run_id,
+        filters=filters,
+    )
+    grouped_rows: dict[str, list[AtlasItem]] = {}
+    for row in rows:
+        if row.region_key is None:
+            continue
+        grouped_rows.setdefault(row.region_key, []).append(row)
+
+    return {
+        region_key: _build_region_slice_stats(region_rows)
+        for region_key, region_rows in grouped_rows.items()
+    }
+
+
+def _load_filtered_items(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    filters: SimilarityGraphFilters,
+) -> list[AtlasItem]:
     query = (
-        select(AtlasItem.region_key, func.count(AtlasItem.id))
+        select(AtlasItem)
         .where(
             AtlasItem.atlas_run_id == atlas_run_id,
             AtlasItem.region_key.is_not(None),
         )
-        .group_by(AtlasItem.region_key)
+        .order_by(
+            AtlasItem.region_key.asc(),
+            AtlasItem.source_item_id.asc(),
+        )
     )
     for clause in _build_atlas_filter_clauses(filters):
         query = query.where(clause)
+    return session.scalars(query).all()
 
-    return {
-        str(region_key): int(item_count)
-        for region_key, item_count in session.execute(query).all()
-        if region_key is not None
-    }
+
+def _build_region_slice_stats(rows: list[AtlasItem]) -> _RegionSliceStats:
+    category_counts: Counter[str] = Counter()
+    app_counts: Counter[str] = Counter()
+    label_counts: Counter[str] = Counter()
+    entity_counts: Counter[str] = Counter()
+    representative_entries: list[tuple[int, int]] = []
+    fallback_representatives: list[int] = []
+
+    for row in rows:
+        category_counts[(row.screen_category or _DEFAULT_CATEGORY)] += 1
+        if row.app_hint:
+            app_counts[row.app_hint] += 1
+        label_counts.update(_label_values_for_item(row))
+        entity_counts.update(_entity_values_for_item(row))
+        if row.is_representative:
+            if row.representative_rank is not None:
+                representative_entries.append((row.representative_rank, row.source_item_id))
+            else:
+                fallback_representatives.append(row.source_item_id)
+
+    dominant_screen_category = _DEFAULT_CATEGORY
+    if category_counts:
+        dominant_screen_category = sorted(
+            category_counts.items(),
+            key=lambda entry: (-entry[1], entry[0]),
+        )[0][0]
+
+    representative_source_item_ids = [
+        source_item_id
+        for rank, source_item_id in sorted(representative_entries, key=lambda entry: (entry[0], entry[1]))
+    ]
+    representative_source_item_ids.extend(sorted(fallback_representatives))
+
+    return _RegionSliceStats(
+        item_count=len(rows),
+        dominant_screen_category=dominant_screen_category,
+        top_labels=_top_counter_values(label_counts),
+        top_apps=_top_counter_values(app_counts),
+        top_entities=_top_counter_values(entity_counts),
+        representative_source_item_ids=representative_source_item_ids,
+    )
 
 
 def _load_similarity_edges(
@@ -235,9 +313,10 @@ def _load_similarity_edges(
     *,
     atlas_run_id: int,
     region_keys: set[str],
+    filters: SimilarityGraphFilters,
     min_edge_weight: float,
 ) -> list[SimilarityGraphEdge]:
-    if not region_keys:
+    if not region_keys or _has_non_threshold_item_filters(filters):
         return []
 
     rows = session.scalars(
@@ -295,51 +374,69 @@ def _build_legend(nodes: list[SimilarityGraphNode]) -> list[SimilarityGraphLegen
     ]
 
 
-def _dominant_screen_category(
-    session: Session,
-    atlas_run_id: int,
-    region_key: str,
-    *,
-    filters: SimilarityGraphFilters,
-) -> str:
-    query = (
-        select(AtlasItem.screen_category)
-        .where(
-            AtlasItem.atlas_run_id == atlas_run_id,
-            AtlasItem.region_key == region_key,
-        )
-        .order_by(AtlasItem.source_item_id.asc())
-    )
-    for clause in _build_atlas_filter_clauses(filters):
-        query = query.where(clause)
-
-    categories = session.scalars(query).all()
-
-    if not categories:
-        return _DEFAULT_CATEGORY
-
-    counts = Counter(category or _DEFAULT_CATEGORY for category in categories)
-    return sorted(counts.items(), key=lambda entry: (-entry[1], entry[0]))[0][0]
-
-
 def _node_size(item_count: int) -> float:
     return round(10.0 + (math.sqrt(max(item_count, 1)) * 4.0), 3)
 
 
-def _representative_source_item_ids(raw_value: str | None) -> list[int]:
-    payload = _json_value(raw_value, default=[])
-    if not isinstance(payload, list):
-        return []
-
-    ranked_entries: list[tuple[int, int]] = []
-    for entry in payload:
-        if not isinstance(entry, dict):
+def _label_values_for_item(row: AtlasItem) -> list[str]:
+    labels: set[str] = set()
+    for object_ref in _json_string_list(row.object_refs_json):
+        prefix, separator, raw_value = object_ref.partition(":")
+        candidate = _normalize_metadata_value(raw_value if separator else object_ref)
+        if not candidate:
             continue
-        rank = entry.get("rank")
-        source_item_id = entry.get("source_item_id")
-        if isinstance(rank, int) and isinstance(source_item_id, int):
-            ranked_entries.append((rank, source_item_id))
-    return [source_item_id for rank, source_item_id in sorted(ranked_entries)]
+        if separator and prefix in {"entity", "person"}:
+            continue
+        labels.add(candidate)
+    if not labels and row.semantic_summary:
+        labels.update(_summary_tokens(row.semantic_summary))
+    return sorted(labels)
+
+
+def _entity_values_for_item(row: AtlasItem) -> list[str]:
+    entities: set[str] = set()
+    for object_ref in _json_string_list(row.object_refs_json):
+        prefix, separator, raw_value = object_ref.partition(":")
+        if not separator or prefix not in {"entity", "person"}:
+            continue
+        candidate = _normalize_metadata_value(raw_value)
+        if candidate:
+            entities.add(candidate)
+    return sorted(entities)
+
+
+def _summary_tokens(text: str) -> list[str]:
+    return sorted({match.group(0).lower() for match in _SUMMARY_TOKEN_PATTERN.finditer(text)})
+
+
+def _normalize_metadata_value(value: str) -> str | None:
+    normalized = value.strip().lower().replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    return normalized or None
+
+
+def _top_counter_values(counter: Counter[str]) -> list[str]:
+    return [
+        value
+        for value, count in sorted(counter.items(), key=lambda entry: (-entry[1], entry[0]))[
+            :_MAX_METADATA_VALUES
+        ]
+    ]
+
+
+def _has_non_threshold_item_filters(filters: SimilarityGraphFilters) -> bool:
+    return any(
+        value is not None
+        for value in (
+            filters.connector_instance_id,
+            filters.app_hint,
+            filters.screen_category,
+            filters.has_knowledge,
+            filters.observed_from,
+            filters.observed_to,
+            filters.search_query,
+        )
+    )
 
 
 def _json_string_list(raw_value: str | None) -> list[str]:

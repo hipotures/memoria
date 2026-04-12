@@ -52,10 +52,37 @@ def test_build_similarity_graph_applies_item_filters_to_node_selection_and_domin
     assert overview.nodes[0].item_count == 2
     assert overview.nodes[0].size > 0
     assert overview.nodes[0].dominant_screen_category == "social"
+    assert overview.nodes[0].top_labels == ["chat", "friends"]
+    assert overview.nodes[0].top_apps == ["telegram"]
+    assert overview.nodes[0].top_entities == ["alice"]
+    assert overview.nodes[0].representative_source_item_ids == [101, 102]
     assert [(entry.category, entry.color, entry.count) for entry in overview.legend] == [
         ("social", "#2EC4B6", 1)
     ]
     assert overview.edges == []
+
+
+def test_build_similarity_graph_honors_explicit_zero_threshold_overrides() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+
+        overview = get_similarity_graph(
+            session,
+            filters=SimilarityGraphFilters(min_cluster_size=5, min_edge_weight=0.8),
+            min_cluster_size=0,
+            min_edge_weight=0.0,
+        )
+
+    assert [node.region_key for node in overview.nodes] == ["region-a", "region-b", "region-c"]
+    assert overview.filters.min_cluster_size == 0
+    assert overview.filters.min_edge_weight == 0.0
+    assert [(edge.source_region_key, edge.target_region_key) for edge in overview.edges] == [
+        ("region-a", "region-b"),
+        ("region-a", "region-c"),
+    ]
 
 
 def _seed_similarity_fixture(session: Session) -> None:
@@ -92,12 +119,16 @@ def _seed_similarity_fixture(session: Session) -> None:
                 label_y=0.2,
                 region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
                 item_count=3,
-                top_labels_json=json.dumps(["chat", "friends"]),
-                top_apps_json=json.dumps(["telegram"]),
+                top_labels_json=json.dumps(["chat", "friends", "whatsapp"]),
+                top_apps_json=json.dumps(["telegram", "whatsapp"]),
                 top_people_json=json.dumps([]),
-                top_entities_json=json.dumps(["entity:alice"]),
+                top_entities_json=json.dumps(["entity:alice", "entity:bob"]),
                 representatives_json=json.dumps(
-                    [{"rank": 1, "source_item_id": 101}, {"rank": 2, "source_item_id": 102}]
+                    [
+                        {"rank": 1, "source_item_id": 101},
+                        {"rank": 2, "source_item_id": 103},
+                        {"rank": 3, "source_item_id": 102},
+                    ]
                 ),
                 bridge_neighbors_json=json.dumps([]),
                 cohesion_score=0.9,
@@ -171,6 +202,8 @@ def _seed_similarity_fixture(session: Session) -> None:
         region_key="region-a",
         screen_category="social",
         app_hint="telegram",
+        semantic_summary="chat with Alice about plans",
+        object_refs=["topic:chat", "entity:alice"],
     )
     _add_atlas_item(
         session,
@@ -179,6 +212,8 @@ def _seed_similarity_fixture(session: Session) -> None:
         region_key="region-a",
         screen_category="social",
         app_hint="telegram",
+        semantic_summary="friends planning thread",
+        object_refs=["topic:friends", "entity:alice"],
     )
     _add_atlas_item(
         session,
@@ -187,6 +222,8 @@ def _seed_similarity_fixture(session: Session) -> None:
         region_key="region-a",
         screen_category="chat",
         app_hint="whatsapp",
+        semantic_summary="whatsapp follow-up with Bob",
+        object_refs=["topic:whatsapp", "entity:bob"],
     )
     _add_atlas_item(
         session,
