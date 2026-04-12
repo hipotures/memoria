@@ -2,6 +2,7 @@
   color-scheme: dark;
   font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
   line-height: 1.5;
+  background-color: #001f2d;
   --night: #07141d;
   --night-soft: #102433;
   --panel: rgba(10, 25, 36, 0.82);
@@ -44,7 +45,7 @@ code {
 }
 
 .similarity-app-shell {
-  width: min(1240px, calc(100% - 32px));
+  width: min(1320px, calc(100% - 32px));
   margin: 0 auto;
   padding: clamp(28px, 5vw, 56px) 0;
 }
@@ -97,6 +98,7 @@ code {
   margin-top: 18px;
   padding: clamp(20px, 4vw, 30px);
   border-radius: 30px;
+  backdrop-filter: blur(14px);
 }
 
 .similarity-stage-card__header,
@@ -132,12 +134,13 @@ code {
 .similarity-stage-card__stage {
   position: relative;
   margin-top: 20px;
-  min-height: min(70vh, 720px);
+  min-height: min(76vh, 780px);
   border-radius: 24px;
   border: 1px solid rgba(165, 202, 217, 0.1);
   background:
-    linear-gradient(180deg, rgba(7, 18, 26, 0.56), rgba(7, 18, 26, 0.88)),
-    radial-gradient(circle at center, rgba(214, 173, 100, 0.06), transparent 48%);
+    linear-gradient(180deg, rgba(0, 31, 45, 0.9), rgba(0, 31, 45, 0.96)),
+    radial-gradient(circle at 22% 18%, rgba(214, 173, 100, 0.08), transparent 28%),
+    radial-gradient(circle at 78% 22%, rgba(108, 195, 214, 0.08), transparent 24%);
   overflow: hidden;
 }
 
@@ -156,6 +159,7 @@ code {
   background: rgba(6, 16, 23, 0.78);
   color: var(--text);
   backdrop-filter: blur(10px);
+  z-index: 1;
 }
 
 .similarity-stage-card__overlay--error {

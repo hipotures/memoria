@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from "react";
 import { fetchSimilarityGraph } from "./api/client";
 import type { SimilarityGraphResponse } from "./api/contracts";
 import { resolvePlotly } from "./lib/plotly";
+import { buildSimilarityFigure } from "./lib/traces";
 
 type LoadState = "loading" | "ready" | "error";
 
@@ -46,42 +47,27 @@ export default function App() {
     }
 
     const plotly = resolvePlotly();
+    const figure = buildSimilarityFigure(graph, {
+      showLabels: true,
+      selectedRegionKey: null,
+    });
 
     void plotly.newPlot(
       stageRef.current,
-      [],
-      {
-        paper_bgcolor: "rgba(0,0,0,0)",
-        plot_bgcolor: "rgba(0,0,0,0)",
-        margin: { l: 0, r: 0, t: 0, b: 0 },
-        xaxis: { visible: false },
-        yaxis: { visible: false },
-        annotations: [
-          {
-            text: "Stage shell ready. Trace construction lands in Task 4.",
-            x: 0.5,
-            y: 0.5,
-            xref: "paper",
-            yref: "paper",
-            showarrow: false,
-            font: { size: 16, color: "#dbe7ec" },
-          },
-        ],
-      },
-      {
-        responsive: true,
-      },
+      figure.data,
+      figure.layout,
+      figure.config,
     );
   }, [graph]);
 
   return (
     <main className="similarity-app-shell">
       <section className="similarity-hero">
-        <p className="similarity-hero__eyebrow">Memoria frontend scaffold</p>
+        <p className="similarity-hero__eyebrow">Semantic atlas restart</p>
         <h1>Cluster similarity network</h1>
         <p className="similarity-hero__lede">
-          Shared topic and task signatures across screenshot clusters, served from the
-          dedicated <code>/similarity</code> bundle.
+          Shared topic and task signatures across screenshot clusters, rendered as a dedicated
+          Plotly overview from the <code>/similarity</code> bundle.
         </p>
       </section>
 
@@ -89,7 +75,7 @@ export default function App() {
         <header className="similarity-stage-card__header">
           <div>
             <p className="similarity-stage-card__label">Similarity graph stage</p>
-            <h2>Plotly shell</h2>
+            <h2>Overview graph</h2>
           </div>
           <div className="similarity-stage-card__meta" aria-label="Similarity graph summary">
             <span>{statusLabel(loadState)}</span>
