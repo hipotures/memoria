@@ -6,10 +6,12 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime
 
+from sqlalchemy import func
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from memoria.atlas.filters import AtlasFilters
+from memoria.atlas.service import _build_atlas_filter_clauses
 from memoria.atlas.service import _get_latest_published_run
 from memoria.domain.models import AtlasEdge
 from memoria.domain.models import AtlasItem
@@ -156,13 +158,26 @@ def _load_similarity_nodes(
     atlas_run_id: int,
     filters: SimilarityGraphFilters,
 ) -> list[SimilarityGraphNode]:
+    region_match_counts = _matching_region_counts(
+        session,
+        atlas_run_id=atlas_run_id,
+        filters=filters,
+    )
+    included_region_keys = [
+        region_key
+        for region_key, item_count in sorted(region_match_counts.items())
+        if item_count >= filters.min_cluster_size
+    ]
+    if not included_region_keys:
+        return []
+
     rows = session.scalars(
         select(AtlasRegion)
         .where(
             AtlasRegion.atlas_run_id == atlas_run_id,
             AtlasRegion.level == 0,
             AtlasRegion.parent_region_key.is_(None),
-            AtlasRegion.item_count >= filters.min_cluster_size,
+            AtlasRegion.region_key.in_(included_region_keys),
         )
         .order_by(AtlasRegion.region_key.asc())
     ).all()
@@ -173,9 +188,14 @@ def _load_similarity_nodes(
             title=row.title,
             x=row.x,
             y=row.y,
-            size=_node_size(row.item_count),
-            item_count=row.item_count,
-            dominant_screen_category=_dominant_screen_category(session, atlas_run_id, row.region_key),
+            size=_node_size(region_match_counts[row.region_key]),
+            item_count=region_match_counts[row.region_key],
+            dominant_screen_category=_dominant_screen_category(
+                session,
+                atlas_run_id,
+                row.region_key,
+                filters=filters,
+            ),
             top_labels=_json_string_list(row.top_labels_json),
             top_apps=_json_string_list(row.top_apps_json),
             top_entities=_json_string_list(row.top_entities_json),
@@ -184,6 +204,30 @@ def _load_similarity_nodes(
         )
         for row in rows
     ]
+
+
+def _matching_region_counts(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    filters: SimilarityGraphFilters,
+) -> dict[str, int]:
+    query = (
+        select(AtlasItem.region_key, func.count(AtlasItem.id))
+        .where(
+            AtlasItem.atlas_run_id == atlas_run_id,
+            AtlasItem.region_key.is_not(None),
+        )
+        .group_by(AtlasItem.region_key)
+    )
+    for clause in _build_atlas_filter_clauses(filters):
+        query = query.where(clause)
+
+    return {
+        str(region_key): int(item_count)
+        for region_key, item_count in session.execute(query).all()
+        if region_key is not None
+    }
 
 
 def _load_similarity_edges(
@@ -251,15 +295,25 @@ def _build_legend(nodes: list[SimilarityGraphNode]) -> list[SimilarityGraphLegen
     ]
 
 
-def _dominant_screen_category(session: Session, atlas_run_id: int, region_key: str) -> str:
-    categories = session.scalars(
+def _dominant_screen_category(
+    session: Session,
+    atlas_run_id: int,
+    region_key: str,
+    *,
+    filters: SimilarityGraphFilters,
+) -> str:
+    query = (
         select(AtlasItem.screen_category)
         .where(
             AtlasItem.atlas_run_id == atlas_run_id,
             AtlasItem.region_key == region_key,
         )
         .order_by(AtlasItem.source_item_id.asc())
-    ).all()
+    )
+    for clause in _build_atlas_filter_clauses(filters):
+        query = query.where(clause)
+
+    categories = session.scalars(query).all()
 
     if not categories:
         return _DEFAULT_CATEGORY

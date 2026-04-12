@@ -14,6 +14,7 @@ from memoria.domain.models import AtlasRun
 from memoria.domain.models import Base
 from memoria.domain.models import Blob
 from memoria.domain.models import SourceItem
+from memoria.similarity.service import SimilarityGraphFilters
 from memoria.similarity.service import get_similarity_graph
 
 
@@ -33,6 +34,28 @@ def test_build_similarity_graph_groups_nodes_by_category_and_filters_weak_edges(
     assert [(edge.source_region_key, edge.target_region_key) for edge in overview.edges] == [
         ("region-a", "region-b")
     ]
+
+
+def test_build_similarity_graph_applies_item_filters_to_node_selection_and_dominant_category() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+
+        overview = get_similarity_graph(
+            session,
+            filters=SimilarityGraphFilters(app_hint="telegram", min_cluster_size=2),
+        )
+
+    assert [node.region_key for node in overview.nodes] == ["region-a"]
+    assert overview.nodes[0].item_count == 2
+    assert overview.nodes[0].size > 0
+    assert overview.nodes[0].dominant_screen_category == "social"
+    assert [(entry.category, entry.color, entry.count) for entry in overview.legend] == [
+        ("social", "#2EC4B6", 1)
+    ]
+    assert overview.edges == []
 
 
 def _seed_similarity_fixture(session: Session) -> None:
@@ -163,7 +186,7 @@ def _seed_similarity_fixture(session: Session) -> None:
         source_item_id=103,
         region_key="region-a",
         screen_category="chat",
-        app_hint="telegram",
+        app_hint="whatsapp",
     )
     _add_atlas_item(
         session,
@@ -200,6 +223,11 @@ def _add_atlas_item(
     region_key: str,
     screen_category: str,
     app_hint: str,
+    connector_instance_id: str = "similarity-test",
+    has_knowledge: bool = False,
+    observed_at: datetime | None = None,
+    semantic_summary: str | None = None,
+    object_refs: list[str] | None = None,
 ) -> None:
     blob = Blob(
         sha256=f"{source_item_id:064d}",
@@ -232,13 +260,13 @@ def _add_atlas_item(
             subregion_key=None,
             x=0.0,
             y=0.0,
-            semantic_summary=f"summary-{source_item_id}",
+            semantic_summary=semantic_summary or f"summary-{source_item_id}",
             app_hint=app_hint,
-            connector_instance_id="similarity-test",
+            connector_instance_id=connector_instance_id,
             screen_category=screen_category,
-            has_knowledge=False,
-            observed_at=datetime(2026, 4, 12, 8, 0, tzinfo=UTC),
-            object_refs_json=json.dumps([]),
+            has_knowledge=has_knowledge,
+            observed_at=observed_at or datetime(2026, 4, 12, 8, 0, tzinfo=UTC),
+            object_refs_json=json.dumps(object_refs or []),
             is_representative=source_item_id in {101, 102, 201, 301},
             representative_rank=1 if source_item_id in {101, 201, 301} else 2 if source_item_id == 102 else None,
             is_bridge=False,
