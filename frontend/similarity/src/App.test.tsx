@@ -10,11 +10,21 @@ describe("App", () => {
   let root: Root;
   let fetchMock: ReturnType<typeof vi.fn>;
   let newPlotMock: ReturnType<typeof vi.fn>;
+  let reactMock: ReturnType<typeof vi.fn>;
+  let plotlyClickHandler:
+    | ((event: {
+        points?: Array<{
+          data?: { name?: string };
+          pointNumber?: number;
+        }>;
+      }) => void)
+    | null;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    plotlyClickHandler = null;
 
     fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
@@ -28,10 +38,17 @@ describe("App", () => {
 
     vi.stubGlobal("fetch", fetchMock);
     window.__PLOTLY_CDN_VERSION__ = "3.5.0";
-    newPlotMock = vi.fn(async () => undefined);
+    newPlotMock = vi.fn(async (element: HTMLElement) => {
+      bindPlotlyEvents(element);
+      return undefined;
+    });
+    reactMock = vi.fn(async (element: HTMLElement) => {
+      bindPlotlyEvents(element);
+      return undefined;
+    });
     window.Plotly = {
       newPlot: newPlotMock,
-      react: vi.fn(async () => undefined),
+      react: reactMock,
     };
   });
 
@@ -43,19 +60,76 @@ describe("App", () => {
     container.remove();
   });
 
-  it("loads the similarity graph payload and renders the page chrome", async () => {
+  it("refetches with thresholds and highlights the clicked cluster", async () => {
     await act(async () => {
       root.render(<App />);
     });
 
     await waitForText(container, "Cluster similarity network");
-    expect(requestPaths(fetchMock)).toEqual(["/similarity/graph"]);
-    expect(newPlotMock).toHaveBeenCalledOnce();
+    await waitForText(container, "Show labels");
 
+    changeInputValue(findInput(container, "Min cluster size"), "8");
+    changeInputValue(findInput(container, "Min edge weight"), "0.55");
+    clickElement(findCheckbox(container, "Show labels"));
+    clickElement(findButton(container, "Apply graph filters"));
+
+    await waitForRequestCount(fetchMock, 2);
+    expect(requestPaths(fetchMock)).toEqual([
+      "/similarity/graph",
+      "/similarity/graph?min_cluster_size=8&min_edge_weight=0.55",
+    ]);
+    expect(newPlotMock).toHaveBeenCalledOnce();
+    expect(reactMock).toHaveBeenCalled();
+
+    act(() => {
+      plotlyClickHandler?.({
+        points: [
+          {
+            data: { name: "research" },
+            pointNumber: 0,
+          },
+        ],
+      });
+    });
+
+    await waitForPlotUpdates(reactMock, 2);
     const plotConfig = newPlotMock.mock.calls[0]?.[3];
     expect(plotConfig).toMatchObject({ responsive: true });
     expect(plotConfig).not.toHaveProperty("displayModeBar", false);
+
+    const lastFigureData = reactMock.mock.calls.at(-1)?.[1] as Array<Record<string, unknown>>;
+    const labelTrace = lastFigureData.at(-1);
+    expect(labelTrace).toMatchObject({
+      mode: "text",
+      text: ["Research cluster"],
+    });
   });
+
+  it("surfaces Plotly init failures through the existing error UI", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => undefined);
+    window.Plotly = undefined;
+
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Plotly 3.5.0 CDN failed to load.");
+    expect(consoleErrorSpy).not.toHaveBeenCalled();
+  });
+
+  function bindPlotlyEvents(element: HTMLElement): void {
+    const plotElement = element as HTMLElement & {
+      on?: (eventName: string, handler: typeof plotlyClickHandler) => HTMLElement;
+    };
+
+    plotElement.on = vi.fn((eventName: string, handler: typeof plotlyClickHandler) => {
+      if (eventName === "plotly_click") {
+        plotlyClickHandler = handler;
+      }
+
+      return plotElement;
+    });
+  }
 });
 
 async function waitForText(container: HTMLElement, text: string): Promise<void> {
@@ -72,10 +146,110 @@ async function waitForText(container: HTMLElement, text: string): Promise<void> 
   throw new Error(`Timed out waiting for text: ${text}`);
 }
 
+async function waitForRequestCount(fetchMock: ReturnType<typeof vi.fn>, count: number): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (fetchMock.mock.calls.length >= count) {
+      return;
+    }
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  throw new Error(`Timed out waiting for ${count} fetch requests.`);
+}
+
+async function waitForPlotUpdates(plotMock: ReturnType<typeof vi.fn>, count: number): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (plotMock.mock.calls.length >= count) {
+      return;
+    }
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  throw new Error(`Timed out waiting for ${count} plot updates.`);
+}
+
 function requestPaths(fetchMock: ReturnType<typeof vi.fn>): string[] {
   return fetchMock.mock.calls.map(([input]) => {
     const url = new URL(String(input), "http://localhost");
     return `${url.pathname}${url.search}`;
+  });
+}
+
+function findInput(container: HTMLElement, labelText: string): HTMLInputElement {
+  return findControlByLabel(container, labelText, "input:not([type='checkbox'])") as HTMLInputElement;
+}
+
+function findCheckbox(container: HTMLElement, labelText: string): HTMLInputElement {
+  return findControlByLabel(container, labelText, "input[type='checkbox']") as HTMLInputElement;
+}
+
+function findControlByLabel(
+  container: HTMLElement,
+  labelText: string,
+  selector: string,
+): HTMLElement {
+  const labels = Array.from(container.querySelectorAll("label"));
+  const label = labels.find((candidate) => candidate.textContent?.includes(labelText));
+
+  if (!label) {
+    throw new Error(`Could not find label: ${labelText}`);
+  }
+
+  const nestedControl = label.querySelector(selector);
+  if (nestedControl instanceof HTMLElement) {
+    return nestedControl;
+  }
+
+  const htmlFor = label.getAttribute("for");
+  if (!htmlFor) {
+    throw new Error(`Label has no associated control: ${labelText}`);
+  }
+
+  const control = container.querySelector(`#${htmlFor}`);
+  if (!(control instanceof HTMLElement)) {
+    throw new Error(`Could not find control for label: ${labelText}`);
+  }
+
+  return control;
+}
+
+function findButton(container: HTMLElement, text: string): HTMLButtonElement {
+  const buttons = Array.from(container.querySelectorAll("button"));
+  const button = buttons.find((candidate) => candidate.textContent?.includes(text));
+
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Could not find button: ${text}`);
+  }
+
+  return button;
+}
+
+function changeInputValue(input: HTMLInputElement, value: string): void {
+  const valueSetter = Object.getOwnPropertyDescriptor(
+    HTMLInputElement.prototype,
+    "value",
+  )?.set;
+
+  if (!valueSetter) {
+    throw new Error("HTMLInputElement value setter is unavailable.");
+  }
+
+  act(() => {
+    valueSetter.call(input, value);
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+}
+
+function clickElement(element: HTMLElement): void {
+  act(() => {
+    element.dispatchEvent(new MouseEvent("click", { bubbles: true }));
   });
 }
 
@@ -146,9 +320,11 @@ function buildGraphPayload() {
       },
     ],
     filters: {
+      connector_instance_id: null,
       min_cluster_size: 2,
       min_edge_weight: 0.25,
       app_hint: null,
+      screen_category: null,
       observed_from: null,
       observed_to: null,
       has_knowledge: null,

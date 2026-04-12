@@ -2,16 +2,20 @@ import type { SimilarityGraphResponse } from "./contracts";
 
 type SimilarityClientOptions = {
   baseUrl?: string;
+  minClusterSize?: number;
+  minEdgeWeight?: number;
 };
 
 export function fetchSimilarityGraph(
-  options?: SimilarityClientOptions,
+  options: SimilarityClientOptions = {},
 ): Promise<SimilarityGraphResponse> {
   return similarityFetch(
     "/similarity/graph",
     {
-      baseUrl: options?.baseUrl,
+      baseUrl: options.baseUrl,
       envOrigin: import.meta.env.VITE_SIMILARITY_API_ORIGIN,
+      minClusterSize: options.minClusterSize,
+      minEdgeWeight: options.minEdgeWeight,
     },
   );
 }
@@ -21,6 +25,8 @@ async function similarityFetch(
   options: {
     baseUrl?: string;
     envOrigin?: string | null;
+    minClusterSize?: number;
+    minEdgeWeight?: number;
   },
 ): Promise<SimilarityGraphResponse> {
   const response = await fetch(buildSimilarityRequestUrl(path, options));
@@ -37,16 +43,27 @@ export function buildSimilarityRequestUrl(
   options: {
     baseUrl?: string;
     envOrigin?: string | null;
+    minClusterSize?: number;
+    minEdgeWeight?: number;
   } = {},
 ): string {
   const apiOrigin =
     normalizeSimilarityOrigin(options.baseUrl) ?? normalizeSimilarityOrigin(options.envOrigin);
+  const url = new URL(path, apiOrigin ?? "http://memoria.local");
 
-  if (apiOrigin === null) {
-    return path;
+  if (options.minClusterSize !== undefined) {
+    url.searchParams.set("min_cluster_size", String(options.minClusterSize));
   }
 
-  return new URL(path, apiOrigin).toString();
+  if (options.minEdgeWeight !== undefined) {
+    url.searchParams.set("min_edge_weight", String(options.minEdgeWeight));
+  }
+
+  if (apiOrigin === null) {
+    return `${url.pathname}${url.search}`;
+  }
+
+  return url.toString();
 }
 
 function normalizeSimilarityOrigin(origin?: string | null): string | null {

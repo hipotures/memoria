@@ -1,9 +1,11 @@
 export type ISODateTimeString = string;
 
 export type SimilarityGraphFilters = {
+  connector_instance_id?: string | null;
   min_cluster_size?: number;
   min_edge_weight?: number;
   app_hint?: string | null;
+  screen_category?: string | null;
   observed_from?: ISODateTimeString | null;
   observed_to?: ISODateTimeString | null;
   has_knowledge?: boolean | null;
