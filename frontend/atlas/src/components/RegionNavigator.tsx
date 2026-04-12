@@ -7,9 +7,10 @@ type RegionNavigatorProps = {
   selectedRegionCount: number | null;
   selectedSubregionCount: number | null;
   canDrillRegion: boolean;
-  canDrillSubregion: boolean;
+  canOpenEvidence: boolean;
+  evidenceActionLabel: string;
   onDrillRegion: () => void;
-  onDrillSubregion: () => void;
+  onOpenEvidence: () => void;
   onReturnToRegion: () => void;
   onReset: () => void;
 };
@@ -21,9 +22,10 @@ export function RegionNavigator({
   selectedRegionCount,
   selectedSubregionCount,
   canDrillRegion,
-  canDrillSubregion,
+  canOpenEvidence,
+  evidenceActionLabel,
   onDrillRegion,
-  onDrillSubregion,
+  onOpenEvidence,
   onReturnToRegion,
   onReset,
 }: RegionNavigatorProps) {
@@ -60,7 +62,7 @@ export function RegionNavigator({
               ? "Atlas overview"
               : level === "region"
                 ? selectedRegionTitle ?? "Region focus"
-                : selectedSubregionTitle ?? "Evidence focus"}
+                : selectedSubregionTitle ?? selectedRegionTitle ?? "Evidence focus"}
           </h2>
         </div>
 
@@ -88,10 +90,10 @@ export function RegionNavigator({
           <button
             type="button"
             className="atlas-button"
-            onClick={onDrillSubregion}
-            disabled={!canDrillSubregion}
+            onClick={onOpenEvidence}
+            disabled={!canOpenEvidence}
           >
-            Open evidence
+            {evidenceActionLabel}
           </button>
         ) : null}
 

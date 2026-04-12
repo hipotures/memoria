@@ -317,6 +317,56 @@ function drawScene(
     mapLayer.addChild(bridge);
   }
 
+  if (scene.level === "region" && scene.regions.length === 0 && scene.focusRegion !== null) {
+    const region = scene.focusRegion;
+    const palette = REGION_PALETTE[hashKey(region.region_key) % REGION_PALETTE.length];
+    const matchCount = atlasRegionDisplayCount(region);
+    const alpha = Math.max(overlayScale(matchCount), 0.28);
+    const graphics = new Graphics();
+    graphics.eventMode = "static";
+
+    const rings = regionRings(region);
+    if (rings.length > 0) {
+      graphics.lineStyle(4, palette.stroke, 0.88);
+      graphics.beginFill(palette.fill, alpha);
+      for (const ring of rings) {
+        const points = ring.flatMap((point) => {
+          const projected = transform(point.x, point.y);
+          return [projected.x, projected.y];
+        });
+        graphics.drawPolygon(points);
+      }
+      graphics.endFill();
+    }
+
+    graphics.on("pointermove", (event: PixiPointerEvent) =>
+      handlers.onHoverChange(buildRegionHoverCard(region, scene.level, event, width, height)),
+    );
+    graphics.on("pointerout", () => handlers.onHoverChange(null));
+    mapLayer.addChild(graphics);
+
+    const labelPoint = transform(region.label_x || region.x, region.label_y || region.y);
+    const title = new Text({
+      text: region.title,
+      style: new TextStyle({
+        ...LABEL_STYLE_OPTIONS,
+        fill: palette.stroke,
+        fontSize: 19,
+      }),
+    });
+    title.anchor.set(0.5);
+    title.position.set(labelPoint.x, labelPoint.y - 8);
+    mapLayer.addChild(title);
+
+    const countLabel = new Text({
+      text: atlasRegionDisplayLabel(region),
+      style: secondaryLabelStyle,
+    });
+    countLabel.anchor.set(0.5);
+    countLabel.position.set(labelPoint.x, labelPoint.y + 15);
+    mapLayer.addChild(countLabel);
+  }
+
   scene.regions.forEach((region, index) => {
     const palette = REGION_PALETTE[hashKey(region.region_key) % REGION_PALETTE.length];
     const isSelected =

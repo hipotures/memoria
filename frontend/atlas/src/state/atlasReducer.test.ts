@@ -114,6 +114,24 @@ describe("atlasReducer", () => {
     });
   });
 
+  it("can open whole-region evidence when no subregion lane exists", () => {
+    const regionState = atlasReducer(initialAtlasState, {
+      type: "region.drilled",
+      regionKey: "region-a",
+    });
+
+    const evidenceState = atlasReducer(regionState, {
+      type: "region.evidenceOpened",
+    });
+
+    expect(evidenceState).toEqual({
+      level: "evidence",
+      selectedRegionKey: "region-a",
+      selectedSubregionKey: null,
+      selectedItemId: null,
+    });
+  });
+
   it("can invalidate a stale subregion target without resetting the selected region", () => {
     const regionState = atlasReducer(initialAtlasState, {
       type: "region.drilled",

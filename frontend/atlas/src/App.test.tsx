@@ -26,7 +26,11 @@ describe("App", () => {
       }
 
       if (url.pathname === "/atlas/regions/region-travel") {
-        return jsonResponse(buildRegionDetailPayload(url));
+        return jsonResponse(buildRegionDetailPayload(url, "region-travel"));
+      }
+
+      if (url.pathname === "/atlas/regions/region-finance") {
+        return jsonResponse(buildRegionDetailPayload(url, "region-finance"));
       }
 
       if (url.pathname === "/atlas/evidence") {
@@ -134,6 +138,38 @@ describe("App", () => {
     });
 
     await waitForText(container, "Evidence stack");
+  });
+
+  it("opens region-level evidence explicitly when a region has no generated subregions", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      findButton("Finance Review", container).click();
+    });
+
+    await waitForText(container, "1 representative screenshot");
+    expect(container.textContent).toContain("Month-end close triage");
+
+    act(() => {
+      findButton("Enter region", container).click();
+    });
+
+    await waitForText(container, "No generated lanes for this region yet");
+    expect(container.textContent).toContain("Canvas preview unavailable in this environment.");
+    expect(findButton("Open region evidence", container).disabled).toBe(false);
+
+    act(() => {
+      findButton("Open region evidence", container).click();
+    });
+
+    await waitForText(container, "Evidence stack");
+
+    const evidenceUrl = lastRequestUrl(fetchMock);
+    expect(evidenceUrl.pathname).toBe("/atlas/evidence");
+    expect(evidenceUrl.searchParams.get("region_key")).toBe("region-finance");
+    expect(evidenceUrl.searchParams.get("subregion_key")).toBeNull();
+    expect(container.textContent).toContain("Slack budget close thread");
   });
 
   it("clears stale subregion targets before Enter can drill a filtered-out lane", async () => {
@@ -491,7 +527,40 @@ function buildOverviewPayload(url: URL) {
   };
 }
 
-function buildRegionDetailPayload(url: URL) {
+function buildRegionDetailPayload(url: URL, regionKey: string) {
+  if (regionKey === "region-finance") {
+    return {
+      atlas_run: buildAtlasRun(),
+      region: buildRegion({
+        region_key: "region-finance",
+        title: "Finance Review",
+        overlay: { match_count: 2 },
+        item_count: 3,
+        top_apps: ["slack", "sheets"],
+        top_labels: ["budget review", "month-end close"],
+        top_people: ["person:morgan"],
+        top_entities: ["topic:month-end-close"],
+        time_start: "2026-03-09T09:00:00Z",
+        time_end: "2026-03-10T11:00:00Z",
+      }),
+      subregions: [],
+      representatives: [
+        buildItem({
+          source_item_id: 401,
+          region_key: "region-finance",
+          subregion_key: null,
+          semantic_summary: "Month-end close triage",
+          app_hint: "Slack",
+          is_representative: true,
+          representative_rank: 1,
+          object_refs: ["topic:month-end-close", "person:morgan"],
+          observed_at: "2026-03-09T09:00:00Z",
+        }),
+      ],
+      active_filters: buildActiveFilters(url),
+    };
+  }
+
   const searchQuery = url.searchParams.get("search_query");
   const subregions =
     searchQuery === "prune"
@@ -592,8 +661,63 @@ function buildRegionDetailPayload(url: URL) {
 }
 
 function buildEvidencePayload(url: URL) {
+  const regionKey = url.searchParams.get("region_key");
   const sort = url.searchParams.get("sort") ?? "observed_at_desc";
   const searchQuery = url.searchParams.get("search_query");
+
+  if (regionKey === "region-finance") {
+    return {
+      atlas_run: buildAtlasRun(),
+      region_key: "region-finance",
+      subregion_key: null,
+      sort,
+      representatives: [
+        buildItem({
+          source_item_id: 401,
+          region_key: "region-finance",
+          subregion_key: null,
+          semantic_summary: "Month-end close triage",
+          app_hint: "Slack",
+          is_representative: true,
+          representative_rank: 1,
+          object_refs: ["topic:month-end-close", "person:morgan"],
+          observed_at: "2026-03-09T09:00:00Z",
+        }),
+      ],
+      bridges: [],
+      long_tail_page: {
+        items: [
+          buildItem({
+            source_item_id: 402,
+            region_key: "region-finance",
+            subregion_key: null,
+            semantic_summary: "Slack budget close thread",
+            app_hint: "Slack",
+            object_refs: ["topic:month-end-close"],
+            observed_at: "2026-03-10T10:00:00Z",
+          }),
+          buildItem({
+            source_item_id: 403,
+            region_key: "region-finance",
+            subregion_key: null,
+            semantic_summary: "Variance sheet review",
+            app_hint: "Sheets",
+            object_refs: ["task:check-variance"],
+            observed_at: "2026-03-10T11:00:00Z",
+          }),
+        ],
+        limit: 25,
+        offset: 0,
+        total: 2,
+      },
+      section_totals: {
+        representatives: 1,
+        bridges: 0,
+        long_tail: 2,
+      },
+      active_filters: buildActiveFilters(url),
+    };
+  }
 
   if (searchQuery === "hotel") {
     return {

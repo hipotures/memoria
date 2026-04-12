@@ -10,6 +10,7 @@ export type AtlasState = {
 export type AtlasAction =
   | { type: "region.selected"; regionKey: string }
   | { type: "region.drilled"; regionKey: string }
+  | { type: "region.evidenceOpened" }
   | { type: "subregion.selected"; subregionKey: string }
   | { type: "subregion.drilled"; subregionKey: string }
   | { type: "subregion.invalidated" }
@@ -37,6 +38,17 @@ export function atlasReducer(state: AtlasState, action: AtlasAction): AtlasState
       return {
         level: "region",
         selectedRegionKey: action.regionKey,
+        selectedSubregionKey: null,
+        selectedItemId: null,
+      };
+    case "region.evidenceOpened":
+      if (state.level !== "region" || state.selectedRegionKey === null) {
+        return state;
+      }
+
+      return {
+        level: "evidence",
+        selectedRegionKey: state.selectedRegionKey,
         selectedSubregionKey: null,
         selectedItemId: null,
       };

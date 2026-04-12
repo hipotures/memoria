@@ -44,6 +44,7 @@ BRIDGE_MARGIN_THRESHOLD = 0.12
 BRIDGE_SECONDARY_DISTANCE_THRESHOLD = 1.0
 REGION_IDENTITY_OVERLAP_THRESHOLD = 0.6
 REGION_IDENTITY_CENTROID_THRESHOLD = 0.2
+SEMANTIC_EDGE_EXTRA_BUDGET_DIVISOR = 3
 _TOKEN_RE = re.compile(r"[a-z0-9]+")
 
 
@@ -594,6 +595,7 @@ def _build_subregions(
             )
         )
 
+    _assign_subregion_bridge_neighbors(subregions)
     return subregions, subregion_key_by_source_item_id
 
 
@@ -649,34 +651,24 @@ def _build_edge_drafts(
     edge_drafts: list[_AtlasEdgeDraft] = []
     neighbors_by_region_key: dict[str, list[dict[str, object]]] = defaultdict(list)
 
-    for left_region, right_region in combinations(sorted(top_regions, key=lambda region: region.region_key), 2):
-        semantic_weight = round(
-            _signal_similarity(left_region.centroid_vector, right_region.centroid_vector),
-            6,
-        )
-        edge_drafts.append(
-            _AtlasEdgeDraft(
-                source_region_key=left_region.region_key,
-                target_region_key=right_region.region_key,
-                weight=semantic_weight,
-                edge_type="semantic_similarity",
-            )
-        )
-        neighbors_by_region_key[left_region.region_key].append(
+    for semantic_edge in _build_sparse_semantic_edge_drafts(top_regions):
+        edge_drafts.append(semantic_edge)
+        neighbors_by_region_key[semantic_edge.source_region_key].append(
             {
-                "edge_type": "semantic_similarity",
-                "region_key": right_region.region_key,
-                "weight": semantic_weight,
+                "edge_type": semantic_edge.edge_type,
+                "region_key": semantic_edge.target_region_key,
+                "weight": semantic_edge.weight,
             }
         )
-        neighbors_by_region_key[right_region.region_key].append(
+        neighbors_by_region_key[semantic_edge.target_region_key].append(
             {
-                "edge_type": "semantic_similarity",
-                "region_key": left_region.region_key,
-                "weight": semantic_weight,
+                "edge_type": semantic_edge.edge_type,
+                "region_key": semantic_edge.source_region_key,
+                "weight": semantic_edge.weight,
             }
         )
 
+    for left_region, right_region in combinations(sorted(top_regions, key=lambda region: region.region_key), 2):
         bridge_count = bridge_pairs.get(_ordered_pair(left_region.region_key, right_region.region_key), 0)
         if bridge_count > 0:
             bridge_weight = float(bridge_count)
@@ -714,6 +706,117 @@ def _build_edge_drafts(
         )
 
     return edge_drafts, neighbors_by_region_key
+
+
+def _assign_subregion_bridge_neighbors(subregions: list[_AtlasRegionDraft]) -> None:
+    if len(subregions) < 2:
+        return
+
+    neighbors_by_region_key: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for index in range(len(subregions) - 1):
+        left_region = subregions[index]
+        right_region = subregions[index + 1]
+        weight = round(_signal_similarity(left_region.centroid_vector, right_region.centroid_vector), 6)
+
+        neighbors_by_region_key[left_region.region_key].append(
+            {
+                "edge_type": "internal_bridge",
+                "region_key": right_region.region_key,
+                "weight": weight,
+            }
+        )
+        neighbors_by_region_key[right_region.region_key].append(
+            {
+                "edge_type": "internal_bridge",
+                "region_key": left_region.region_key,
+                "weight": weight,
+            }
+        )
+
+    for subregion in subregions:
+        subregion.bridge_neighbors = sorted(
+            neighbors_by_region_key.get(subregion.region_key, []),
+            key=lambda neighbor: (-float(neighbor["weight"]), str(neighbor["region_key"])),
+        )
+
+
+def _build_sparse_semantic_edge_drafts(
+    top_regions: list[_AtlasRegionDraft],
+) -> list[_AtlasEdgeDraft]:
+    ordered_regions = sorted(top_regions, key=lambda region: region.region_key)
+    if len(ordered_regions) < 2:
+        return []
+
+    candidates: list[tuple[float, str, str]] = []
+    for left_region, right_region in combinations(ordered_regions, 2):
+        candidates.append(
+            (
+                round(_signal_similarity(left_region.centroid_vector, right_region.centroid_vector), 6),
+                left_region.region_key,
+                right_region.region_key,
+            )
+        )
+    candidates.sort(key=lambda candidate: (-candidate[0], candidate[1], candidate[2]))
+
+    selected_pairs: set[tuple[str, str]] = set()
+    degree_by_region_key: Counter[str] = Counter()
+    parent_by_region_key = {region.region_key: region.region_key for region in ordered_regions}
+
+    def _find(region_key: str) -> str:
+        parent = parent_by_region_key[region_key]
+        if parent == region_key:
+            return parent
+        parent_by_region_key[region_key] = _find(parent)
+        return parent_by_region_key[region_key]
+
+    def _union(left_key: str, right_key: str) -> bool:
+        left_root = _find(left_key)
+        right_root = _find(right_key)
+        if left_root == right_root:
+            return False
+        parent_by_region_key[right_root] = left_root
+        return True
+
+    selected_edges: list[_AtlasEdgeDraft] = []
+    for weight, left_key, right_key in candidates:
+        if not _union(left_key, right_key):
+            continue
+        selected_pairs.add((left_key, right_key))
+        degree_by_region_key[left_key] += 1
+        degree_by_region_key[right_key] += 1
+        selected_edges.append(
+            _AtlasEdgeDraft(
+                source_region_key=left_key,
+                target_region_key=right_key,
+                weight=weight,
+                edge_type="semantic_similarity",
+            )
+        )
+
+    extra_budget = max(1, math.ceil(len(ordered_regions) / SEMANTIC_EDGE_EXTRA_BUDGET_DIVISOR))
+    for weight, left_key, right_key in candidates:
+        if extra_budget <= 0 or (left_key, right_key) in selected_pairs:
+            continue
+        if degree_by_region_key[left_key] >= 2 and degree_by_region_key[right_key] >= 2:
+            continue
+
+        selected_pairs.add((left_key, right_key))
+        degree_by_region_key[left_key] += 1
+        degree_by_region_key[right_key] += 1
+        selected_edges.append(
+            _AtlasEdgeDraft(
+                source_region_key=left_key,
+                target_region_key=right_key,
+                weight=weight,
+                edge_type="semantic_similarity",
+            )
+        )
+        extra_budget -= 1
+
+    return sorted(
+        selected_edges,
+        key=lambda edge: (edge.source_region_key, edge.target_region_key),
+    )
 
 
 def _persist_regions(

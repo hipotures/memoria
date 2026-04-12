@@ -17,6 +17,7 @@ type InsightDockProps = {
   selectedRegion: AtlasRegion | null;
   activeFocusRegion: AtlasRegion | null;
   visibleSubregions: AtlasRegion[];
+  hasGeneratedSubregions: boolean;
   selectedSubregion: AtlasRegion | null;
   selectedItem: AtlasItem | null;
   regionRepresentatives: AtlasItem[];
@@ -24,11 +25,13 @@ type InsightDockProps = {
   evidenceSections: EvidenceSections<AtlasItem> | null;
   evidenceSort: AtlasEvidenceSort;
   currentFilters: AtlasFilters;
+  evidenceActionLabel: string;
   onEvidenceSortChange: (sort: AtlasEvidenceSort) => void;
   onSelectRegion: (regionKey: string) => void;
   onDrillRegion: () => void;
   onSelectSubregion: (subregionKey: string) => void;
-  onDrillSubregion: () => void;
+  onOpenEvidence: () => void;
+  canOpenEvidence: boolean;
   onApplyFocusApp: (appHint: string) => void;
   onApplyFocusWindow: () => void;
   onClearFocusFilters: () => void;
@@ -46,6 +49,7 @@ export function InsightDock({
   selectedRegion,
   activeFocusRegion,
   visibleSubregions,
+  hasGeneratedSubregions,
   selectedSubregion,
   selectedItem,
   regionRepresentatives,
@@ -53,11 +57,13 @@ export function InsightDock({
   evidenceSections,
   evidenceSort,
   currentFilters,
+  evidenceActionLabel,
   onEvidenceSortChange,
   onSelectRegion,
   onDrillRegion,
   onSelectSubregion,
-  onDrillSubregion,
+  onOpenEvidence,
+  canOpenEvidence,
   onApplyFocusApp,
   onApplyFocusWindow,
   onClearFocusFilters,
@@ -168,16 +174,20 @@ export function InsightDock({
             <button
               type="button"
               className="atlas-button atlas-button--ghost"
-              onClick={onDrillSubregion}
-              disabled={selectedSubregion === null}
+              onClick={onOpenEvidence}
+              disabled={!canOpenEvidence}
             >
-              Open evidence
+              {evidenceActionLabel}
             </button>
           )}
         </header>
 
         {level === "overview" && regionDetailLoaded ? (
-          visibleSubregions.length > 0 ? (
+          !hasGeneratedSubregions ? (
+            <p className="dock-empty">
+              No generated lanes for this region yet. Enter the region to inspect the whole evidence slice.
+            </p>
+          ) : visibleSubregions.length > 0 ? (
             <ul className="dock-list">
               {visibleSubregions.map((subregion) => (
                 <li key={subregion.region_key} className="dock-list__row">
@@ -206,7 +216,11 @@ export function InsightDock({
               </li>
             ))}
           </ul>
-        ) : (
+        ) : !hasGeneratedSubregions ? (
+          <p className="dock-empty">
+            No generated lanes for this region yet. Use {evidenceActionLabel.toLowerCase()} to inspect the whole region.
+          </p>
+        ) : visibleSubregions.length > 0 ? (
           <ul className="dock-list">
             {visibleSubregions.map((subregion) => (
               <li key={subregion.region_key} className="dock-list__row">
@@ -225,6 +239,8 @@ export function InsightDock({
               </li>
             ))}
           </ul>
+        ) : (
+          <p className="dock-empty">No subregions match the current atlas request.</p>
         )}
       </section>
 

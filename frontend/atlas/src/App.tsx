@@ -136,8 +136,7 @@ export default function App() {
   useEffect(() => {
     if (
       atlasState.level !== "evidence" ||
-      atlasState.selectedRegionKey === null ||
-      atlasState.selectedSubregionKey === null
+      atlasState.selectedRegionKey === null
     ) {
       return;
     }
@@ -254,6 +253,7 @@ export default function App() {
   const structuralOverviewRegions = overviewData?.regions ?? [];
   const structuralOverviewEdges = overviewData?.edges ?? [];
   const structuralSubregions = activeRegionDetail?.subregions ?? [];
+  const hasGeneratedSubregions = structuralSubregions.length > 0;
 
   const listedRegions = useMemo(
     () =>
@@ -336,13 +336,43 @@ export default function App() {
     return Array.from(values).sort((left, right) => left.localeCompare(right));
   }, [activeFocusRegion, activeRegionDetail, overviewData, visibleEvidenceItems]);
 
-  const stageRegions = atlasState.level === "overview" ? structuralOverviewRegions : structuralSubregions;
+  const stageRegions =
+    atlasState.level === "overview"
+      ? structuralOverviewRegions
+      : hasGeneratedSubregions
+        ? structuralSubregions
+        : selectedRegion !== null
+          ? [selectedRegion]
+          : [];
   const emptyFilteredState =
     backendFilteringActive &&
     overviewState === "ready" &&
     overviewData?.atlas_run !== null &&
     stageRegions.length > 0 &&
     !regionSetHasMatches(stageRegions);
+  const canOpenRegionEvidence =
+    atlasState.level === "region" &&
+    activeRegionDetail !== null &&
+    selectedRegion !== null &&
+    !hasGeneratedSubregions;
+  const canOpenEvidence = selectedSubregion !== null || canOpenRegionEvidence;
+  const evidenceActionLabel = canOpenRegionEvidence ? "Open region evidence" : "Open evidence";
+  const stageNotice =
+    atlasState.level === "region" && activeRegionDetail !== null && !hasGeneratedSubregions
+      ? {
+          title: "No generated lanes for this region yet",
+          detail: "Open region evidence to inspect the whole region without waiting for a lane breakdown.",
+        }
+      : emptyFilteredState
+        ? {
+            title:
+              atlasState.level === "overview"
+                ? "No regions match the current filters"
+                : "No visible lanes match the current filters",
+            detail:
+              "The atlas field stays pinned so you can keep your bearings while broadening the request.",
+          }
+        : null;
 
   const handleDraftChange = (patch: Partial<AtlasToolbarDraft>) => {
     setToolbarDraft((current) => ({ ...current, ...patch }));
@@ -379,13 +409,19 @@ export default function App() {
     dispatch({ type: "subregion.selected", subregionKey });
   };
 
-  const handleDrillSubregion = (subregionKey?: string) => {
+  const handleOpenEvidence = (subregionKey?: string) => {
     const nextSubregionKey = subregionKey ?? selectedSubregion?.region_key ?? null;
-    if (nextSubregionKey === null) {
+    setLongTailOffset(0);
+    setEvidenceData(null);
+
+    if (nextSubregionKey !== null) {
+      dispatch({ type: "subregion.drilled", subregionKey: nextSubregionKey });
       return;
     }
-    setLongTailOffset(0);
-    dispatch({ type: "subregion.drilled", subregionKey: nextSubregionKey });
+
+    if (canOpenRegionEvidence) {
+      dispatch({ type: "region.evidenceOpened" });
+    }
   };
 
   const handleSelectItem = (sourceItemId: number) => {
@@ -462,7 +498,13 @@ export default function App() {
 
       if (atlasState.level === "region" && selectedSubregion !== null) {
         event.preventDefault();
-        handleDrillSubregion();
+        handleOpenEvidence();
+        return;
+      }
+
+      if (atlasState.level === "region" && canOpenRegionEvidence) {
+        event.preventDefault();
+        handleOpenEvidence();
       }
     };
 
@@ -472,6 +514,7 @@ export default function App() {
     };
   }, [
     atlasState.level,
+    canOpenRegionEvidence,
     atlasState.selectedRegionKey,
     selectedSubregion,
   ]);
@@ -503,9 +546,10 @@ export default function App() {
             selectedRegionCount={selectedRegion?.item_count ?? null}
             selectedSubregionCount={selectedSubregion?.item_count ?? null}
             canDrillRegion={selectedRegion !== null}
-            canDrillSubregion={selectedSubregion !== null}
+            canOpenEvidence={canOpenEvidence}
+            evidenceActionLabel={evidenceActionLabel}
             onDrillRegion={() => handleDrillRegion()}
-            onDrillSubregion={() => handleDrillSubregion()}
+            onOpenEvidence={() => handleOpenEvidence()}
             onReturnToRegion={handleReturnToRegion}
             onReset={handleResetAtlas}
           />
@@ -541,8 +585,7 @@ export default function App() {
 
             {currentError === null &&
             overviewData?.atlas_run !== null &&
-            (overviewData?.regions.length ?? 0) > 0 &&
-            stageRegions.length > 0 ? (
+            ((overviewData?.regions.length ?? 0) > 0 || selectedRegion !== null) ? (
               <AtlasCanvas
                 level={atlasState.level}
                 overviewRegions={structuralOverviewRegions}
@@ -551,25 +594,14 @@ export default function App() {
                 subregions={structuralSubregions}
                 evidenceItems={visibleEvidenceItems}
                 filteringActive={backendFilteringActive}
-                stageNotice={
-                  emptyFilteredState
-                    ? {
-                        title:
-                          atlasState.level === "overview"
-                            ? "No regions match the current filters"
-                            : "No visible lanes match the current filters",
-                        detail:
-                          "The atlas field stays pinned so you can keep your bearings while broadening the request.",
-                      }
-                    : null
-                }
+                stageNotice={stageNotice}
                 selectedRegionKey={atlasState.selectedRegionKey}
                 selectedSubregionKey={atlasState.selectedSubregionKey}
                 selectedItemId={atlasState.selectedItemId}
                 onSelectRegion={handleSelectRegion}
                 onDrillRegion={handleDrillRegion}
                 onSelectSubregion={handleSelectSubregion}
-                onDrillSubregion={handleDrillSubregion}
+                onDrillSubregion={handleOpenEvidence}
                 onSelectItem={handleSelectItem}
               />
             ) : null}
@@ -583,6 +615,7 @@ export default function App() {
           selectedRegion={selectedRegion}
           activeFocusRegion={activeFocusRegion}
           visibleSubregions={listedSubregions}
+          hasGeneratedSubregions={hasGeneratedSubregions}
           selectedSubregion={selectedSubregion}
           selectedItem={selectedItem}
           regionRepresentatives={regionRepresentatives}
@@ -590,11 +623,13 @@ export default function App() {
           evidenceSections={evidenceSections}
           evidenceSort={evidenceSort}
           currentFilters={serverFilters}
+          evidenceActionLabel={evidenceActionLabel}
           onEvidenceSortChange={handleEvidenceSortChange}
           onSelectRegion={handleSelectRegion}
           onDrillRegion={() => handleDrillRegion()}
           onSelectSubregion={handleSelectSubregion}
-          onDrillSubregion={() => handleDrillSubregion()}
+          onOpenEvidence={() => handleOpenEvidence()}
+          canOpenEvidence={canOpenEvidence}
           onApplyFocusApp={handleApplyFocusApp}
           onApplyFocusWindow={handleApplyFocusWindow}
           onClearFocusFilters={handleClearFocusFilters}

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import math
 
 from sqlalchemy import select
 from sqlalchemy.orm import Session
@@ -337,6 +338,135 @@ def test_rebuild_screenshot_atlas_uses_semantic_map_snapshot_metadata_when_embed
     assert atlas_run.source_snapshot_id == first_run.source_snapshot_id
     assert atlas_run.corpus_hash == first_run.corpus_hash
     assert second_edges == first_edges
+
+
+def test_rebuild_screenshot_atlas_keeps_top_level_semantic_similarity_sparse_on_real_output(
+    tmp_path
+):
+    from memoria.atlas.projection import rebuild_screenshot_atlas
+    from memoria.domain.models import AtlasEdge
+    from memoria.domain.models import AtlasRegion
+
+    engine = create_test_engine(tmp_path, "atlas-sparse-topology.db")
+    seed_atlas_dataset(engine, tmp_path)
+
+    with Session(engine) as session:
+        result = rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+
+    with Session(engine) as session:
+        top_regions = session.scalars(
+            select(AtlasRegion)
+            .where(
+                AtlasRegion.atlas_run_id == int(result["atlas_run_id"]),
+                AtlasRegion.level == 0,
+            )
+            .order_by(AtlasRegion.region_key.asc())
+        ).all()
+        semantic_edges = session.scalars(
+            select(AtlasEdge)
+            .where(
+                AtlasEdge.atlas_run_id == int(result["atlas_run_id"]),
+                AtlasEdge.edge_type == "semantic_similarity",
+            )
+            .order_by(AtlasEdge.source_region_key.asc(), AtlasEdge.target_region_key.asc())
+        ).all()
+
+    assert len(top_regions) >= 6
+    full_graph_edge_count = len(top_regions) * (len(top_regions) - 1) // 2
+    assert 0 < len(semantic_edges) < full_graph_edge_count
+    assert len(semantic_edges) <= len(top_regions) * 2
+
+
+def test_rebuild_screenshot_atlas_populates_generated_subregion_bridge_neighbors(tmp_path, monkeypatch):
+    from memoria.atlas import projection
+    from memoria.domain.models import AtlasRegion
+
+    engine = create_test_engine(tmp_path, "atlas-subregion-bridges.db")
+    seeded = seed_atlas_dataset(engine, tmp_path)
+
+    def _atlas_point(
+        *,
+        source_item_id: int,
+        angle_index: int,
+    ):
+        angle = (math.pi * 2 * angle_index) / 9
+        return projection._AtlasPoint(
+            source_item_id=source_item_id,
+            cluster_key="cluster-ops",
+            x=round(math.cos(angle) * 100, 3),
+            y=round(math.sin(angle) * 100, 3),
+            vector=[round(math.cos(angle), 6), round(math.sin(angle), 6)],
+            semantic_summary=f"Operations capture {angle_index + 1}",
+            app_hint="slack" if angle_index % 2 == 0 else "gmail",
+            connector_instance_id="atlas-seed",
+            screen_category="chat",
+            has_knowledge=angle_index % 3 == 0,
+            observed_at=None,
+            object_refs=["topic:ops-review"],
+            knowledge_count=1 if angle_index % 3 == 0 else 0,
+            searchable_labels=["operations", "review"],
+            cluster_hints=["operations review", f"lane {angle_index + 1}"],
+        )
+
+    region_points = [
+        _atlas_point(source_item_id=source_item_id, angle_index=index)
+        for index, source_item_id in enumerate(seeded.source_item_ids[:9])
+    ]
+    fake_map_run = projection._LatestSemanticMapRun(
+        map_run_id=seeded.semantic_map_run_id,
+        source_snapshot_id=f"atlas-input:semantic-map-run:{seeded.semantic_map_run_id}:subregionfixture",
+        corpus_hash="subregionfixture",
+        embedding_type="screenshot_semantic_text",
+        embedding_model="subregion-test-model",
+        embedding_version="2d-basis",
+        regions=[
+            projection._SemanticRegionSource(
+                cluster_key="cluster-ops",
+                title="Operations review",
+                x=0.0,
+                y=0.0,
+                top_labels=["operations review"],
+                top_apps=["slack", "gmail"],
+                time_start=None,
+                time_end=None,
+                items=region_points,
+            )
+        ],
+        points_by_id={point.source_item_id: point for point in region_points},
+    )
+
+    monkeypatch.setattr(projection, "_load_latest_semantic_map_run", lambda session: fake_map_run)
+    monkeypatch.setattr(
+        projection,
+        "_load_prior_region_identities",
+        lambda session, *, points_by_id: [],
+    )
+
+    with Session(engine) as session:
+        result = projection.rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+
+    with Session(engine) as session:
+        subregions = session.scalars(
+            select(AtlasRegion)
+            .where(
+                AtlasRegion.atlas_run_id == int(result["atlas_run_id"]),
+                AtlasRegion.level == 1,
+            )
+            .order_by(AtlasRegion.region_key.asc())
+        ).all()
+
+    assert len(subregions) == 3
+    subregion_keys = {region.region_key for region in subregions}
+
+    for subregion in subregions:
+        neighbors = json.loads(subregion.bridge_neighbors_json)
+        assert neighbors
+        assert {
+            neighbor["region_key"]
+            for neighbor in neighbors
+        } <= (subregion_keys - {subregion.region_key})
 
 
 def test_rebuild_screenshot_atlas_changes_snapshot_identity_when_live_metadata_changes(tmp_path):
