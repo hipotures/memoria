@@ -36,6 +36,22 @@ def test_build_similarity_graph_groups_nodes_by_category_and_filters_weak_edges(
     ]
 
 
+def test_build_similarity_graph_keeps_snapshot_metadata_when_unfiltered() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+
+        overview = get_similarity_graph(session, min_cluster_size=2, min_edge_weight=0.3)
+
+    assert [node.region_key for node in overview.nodes] == ["region-a", "region-b"]
+    assert overview.nodes[0].top_labels == ["chat", "friends", "whatsapp"]
+    assert overview.nodes[0].top_apps == ["telegram", "whatsapp"]
+    assert overview.nodes[0].top_entities == ["entity:alice", "entity:bob"]
+    assert overview.nodes[0].representative_source_item_ids == [101, 103, 102]
+
+
 def test_build_similarity_graph_applies_item_filters_to_node_selection_and_dominant_category() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -56,6 +72,8 @@ def test_build_similarity_graph_applies_item_filters_to_node_selection_and_domin
     assert overview.nodes[0].top_apps == ["telegram"]
     assert overview.nodes[0].top_entities == ["alice"]
     assert overview.nodes[0].representative_source_item_ids == [101, 102]
+    assert overview.nodes[0].top_labels != ["chat", "friends", "whatsapp"]
+    assert overview.nodes[0].representative_source_item_ids != [101, 103, 102]
     assert [(entry.category, entry.color, entry.count) for entry in overview.legend] == [
         ("social", "#2EC4B6", 1)
     ]

@@ -177,6 +177,7 @@ def _load_similarity_nodes(
     atlas_run_id: int,
     filters: SimilarityGraphFilters,
 ) -> list[SimilarityGraphNode]:
+    use_snapshot_metadata = not _has_non_threshold_item_filters(filters)
     region_slice_stats = _load_region_slice_stats(
         session,
         atlas_run_id=atlas_run_id,
@@ -210,11 +211,27 @@ def _load_similarity_nodes(
             size=_node_size(region_slice_stats[row.region_key].item_count),
             item_count=region_slice_stats[row.region_key].item_count,
             dominant_screen_category=region_slice_stats[row.region_key].dominant_screen_category,
-            top_labels=region_slice_stats[row.region_key].top_labels,
-            top_apps=region_slice_stats[row.region_key].top_apps,
-            top_entities=region_slice_stats[row.region_key].top_entities,
+            top_labels=(
+                _json_string_list(row.top_labels_json)
+                if use_snapshot_metadata
+                else region_slice_stats[row.region_key].top_labels
+            ),
+            top_apps=(
+                _json_string_list(row.top_apps_json)
+                if use_snapshot_metadata
+                else region_slice_stats[row.region_key].top_apps
+            ),
+            top_entities=(
+                _json_string_list(row.top_entities_json)
+                if use_snapshot_metadata
+                else region_slice_stats[row.region_key].top_entities
+            ),
             is_labeled=bool(row.title.strip()),
-            representative_source_item_ids=region_slice_stats[row.region_key].representative_source_item_ids,
+            representative_source_item_ids=(
+                _snapshot_representative_source_item_ids(row.representatives_json)
+                if use_snapshot_metadata
+                else region_slice_stats[row.region_key].representative_source_item_ids
+            ),
         )
         for row in rows
     ]
@@ -376,6 +393,22 @@ def _build_legend(nodes: list[SimilarityGraphNode]) -> list[SimilarityGraphLegen
 
 def _node_size(item_count: int) -> float:
     return round(10.0 + (math.sqrt(max(item_count, 1)) * 4.0), 3)
+
+
+def _snapshot_representative_source_item_ids(raw_value: str | None) -> list[int]:
+    payload = _json_value(raw_value, default=[])
+    if not isinstance(payload, list):
+        return []
+
+    ranked_entries: list[tuple[int, int]] = []
+    for entry in payload:
+        if not isinstance(entry, dict):
+            continue
+        rank = entry.get("rank")
+        source_item_id = entry.get("source_item_id")
+        if isinstance(rank, int) and isinstance(source_item_id, int):
+            ranked_entries.append((rank, source_item_id))
+    return [source_item_id for rank, source_item_id in sorted(ranked_entries, key=lambda entry: (entry[0], entry[1]))]
 
 
 def _label_values_for_item(row: AtlasItem) -> list[str]:
