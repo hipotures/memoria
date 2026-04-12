@@ -24,6 +24,10 @@ export function buildSimilarityFigure(
   options: SimilarityFigureOptions,
 ): SimilarityFigure {
   const nodesByRegionKey = new Map(graph.nodes.map((node) => [node.region_key, node]));
+  const selectedNode =
+    options.selectedRegionKey !== null
+      ? nodesByRegionKey.get(options.selectedRegionKey) ?? null
+      : null;
 
   const edgeTrace = {
     type: "scattergl",
@@ -75,6 +79,28 @@ export function buildSimilarityFigure(
     };
   });
 
+  const highlightTrace =
+    selectedNode === null
+      ? null
+      : {
+          type: "scattergl",
+          mode: "markers",
+          name: "selected-highlight",
+          showlegend: false,
+          hoverinfo: "skip",
+          x: [selectedNode.x],
+          y: [selectedNode.y],
+          marker: {
+            size: [selectedNode.size + 10],
+            symbol: "circle-open",
+            color: "rgba(255,255,255,0)",
+            line: {
+              color: "rgba(255,255,255,0.95)",
+              width: 2.5,
+            },
+          },
+        };
+
   const labeledNodes = selectLabeledNodes(graph.nodes, options);
   const labelTrace = {
     type: "scattergl",
@@ -91,8 +117,13 @@ export function buildSimilarityFigure(
     },
   };
 
+  const traces =
+    highlightTrace === null
+      ? [edgeTrace, ...nodeTraces, labelTrace]
+      : [edgeTrace, ...nodeTraces, highlightTrace, labelTrace];
+
   return {
-    data: [edgeTrace, ...nodeTraces, labelTrace],
+    data: traces,
     layout: {
       paper_bgcolor: "#001f2d",
       plot_bgcolor: "#001f2d",

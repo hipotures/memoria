@@ -17,23 +17,23 @@ describe("buildSimilarityFigure", () => {
       hoverinfo: "skip",
     });
 
-    expect(figure.data[1]).toMatchObject({
+    expect(findTrace(figure, "social")).toMatchObject({
       type: "scattergl",
       mode: "markers",
       name: "social",
       customdata: [["Social cluster", 21, "social", "telegram, chat", "Telegram"]],
     });
-    expect(figure.data[2]).toMatchObject({
+    expect(findTrace(figure, "research")).toMatchObject({
       type: "scattergl",
       mode: "markers",
       name: "research",
     });
-    expect(figure.data[3]).toMatchObject({
+    expect(findTrace(figure, "utility")).toMatchObject({
       type: "scattergl",
       mode: "markers",
       name: "utility",
     });
-    expect(figure.data[4]).toMatchObject({
+    expect(findTextTrace(figure)).toMatchObject({
       type: "scattergl",
       mode: "text",
       showlegend: false,
@@ -65,10 +65,33 @@ describe("buildSimilarityFigure", () => {
       selectedRegionKey: "region-research",
     });
 
-    const labelTrace = figure.data[4];
+    const labelTrace = findTextTrace(figure);
     expect(labelTrace).toMatchObject({
       mode: "text",
       text: ["Social cluster", "Research cluster", "Utility cluster"],
+    });
+  });
+
+  it("adds a dedicated highlight marker trace for the selected region", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      showLabels: true,
+      selectedRegionKey: "region-research",
+    });
+
+    expect(findHighlightTrace(figure)).toMatchObject({
+      type: "scattergl",
+      mode: "markers",
+      name: "selected-highlight",
+      showlegend: false,
+      hoverinfo: "skip",
+      x: [0.68],
+      y: [0.23],
+      marker: {
+        symbol: "circle-open",
+        line: {
+          color: "rgba(255,255,255,0.95)",
+        },
+      },
     });
   });
 
@@ -78,7 +101,7 @@ describe("buildSimilarityFigure", () => {
       selectedRegionKey: "region-research",
     });
 
-    expect(figure.data[4]).toMatchObject({
+    expect(findTextTrace(figure)).toMatchObject({
       mode: "text",
       text: ["Research cluster"],
       x: [0.68],
@@ -92,7 +115,7 @@ describe("buildSimilarityFigure", () => {
       selectedRegionKey: null,
     });
 
-    expect(figure.data[4]).toMatchObject({
+    expect(findTextTrace(figure)).toMatchObject({
       mode: "text",
       text: [],
       x: [],
@@ -106,7 +129,7 @@ describe("buildSimilarityFigure", () => {
       selectedRegionKey: null,
     });
 
-    expect(figure.data[1]).toMatchObject({
+    expect(findTrace(figure, "social")).toMatchObject({
       hovertemplate:
         "<b>%{customdata[0]}</b><br>" +
         "items: %{customdata[1]}<br>" +
@@ -211,3 +234,34 @@ const graphFixture: SimilarityGraphResponse = {
     search_query: null,
   },
 };
+
+function findTrace(
+  figure: ReturnType<typeof buildSimilarityFigure>,
+  name: string,
+): Record<string, unknown> {
+  const trace = figure.data.find(
+    (entry) => typeof entry.name === "string" && entry.name === name,
+  );
+
+  if (!trace) {
+    throw new Error(`Trace not found: ${name}`);
+  }
+
+  return trace;
+}
+
+function findTextTrace(figure: ReturnType<typeof buildSimilarityFigure>): Record<string, unknown> {
+  const trace = figure.data.find((entry) => entry.mode === "text");
+
+  if (!trace) {
+    throw new Error("Text trace not found.");
+  }
+
+  return trace;
+}
+
+function findHighlightTrace(
+  figure: ReturnType<typeof buildSimilarityFigure>,
+): Record<string, unknown> {
+  return findTrace(figure, "selected-highlight");
+}

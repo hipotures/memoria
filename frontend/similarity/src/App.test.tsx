@@ -60,7 +60,7 @@ describe("App", () => {
     container.remove();
   });
 
-  it("refetches with thresholds and highlights the clicked cluster", async () => {
+  it("refetches with thresholds and adds a visual highlight trace for the clicked cluster", async () => {
     await act(async () => {
       root.render(<App />);
     });
@@ -98,10 +98,17 @@ describe("App", () => {
     expect(plotConfig).not.toHaveProperty("displayModeBar", false);
 
     const lastFigureData = reactMock.mock.calls.at(-1)?.[1] as Array<Record<string, unknown>>;
-    const labelTrace = lastFigureData.at(-1);
-    expect(labelTrace).toMatchObject({
-      mode: "text",
-      text: ["Research cluster"],
+    const highlightTrace = lastFigureData.find(
+      (trace) => trace.name === "selected-highlight",
+    );
+    expect(highlightTrace).toMatchObject({
+      type: "scattergl",
+      mode: "markers",
+      x: [0.68],
+      y: [0.23],
+      marker: {
+        symbol: "circle-open",
+      },
     });
   });
 
