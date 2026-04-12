@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 
 import { fetchSimilarityGraph } from "./api/client";
-import type { SimilarityGraphNode, SimilarityGraphResponse } from "./api/contracts";
+import type { SimilarityGraphResponse } from "./api/contracts";
 import { resolvePlotly } from "./lib/plotly";
 import { buildSimilarityFigure } from "./lib/traces";
 
@@ -11,6 +11,7 @@ type GraphQuery = {
   minEdgeWeight?: number;
 };
 type PlotlyClickPoint = {
+  customdata?: unknown;
   data?: { name?: unknown };
   pointNumber?: unknown;
 };
@@ -24,8 +25,9 @@ type PlotlyStageElement = HTMLDivElement & {
 
 export default function App() {
   const stageRef = useRef<HTMLDivElement | null>(null);
-  const graphRef = useRef<SimilarityGraphResponse | null>(null);
+  const mountedRef = useRef(false);
   const plotReadyRef = useRef(false);
+  const activeRequestIdRef = useRef(0);
   const [graph, setGraph] = useState<SimilarityGraphResponse | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -34,29 +36,13 @@ export default function App() {
   const [showLabels, setShowLabels] = useState(true);
   const [selectedRegionKey, setSelectedRegionKey] = useState<string | null>(null);
 
-  graphRef.current = graph;
-
   useEffect(() => {
-    let cancelled = false;
-
-    void loadGraph()
-      .then((response) => {
-        if (cancelled) {
-          return;
-        }
-
-        syncGraphState(response);
-      })
-      .catch((error: unknown) => {
-        if (cancelled) {
-          return;
-        }
-
-        applyErrorState(error);
-      });
+    mountedRef.current = true;
+    startGraphLoad();
 
     return () => {
-      cancelled = true;
+      mountedRef.current = false;
+      activeRequestIdRef.current += 1;
     };
   }, []);
 
@@ -188,10 +174,27 @@ export default function App() {
     </main>
   );
 
-  async function loadGraph(query: GraphQuery = {}): Promise<SimilarityGraphResponse> {
+  function startGraphLoad(query: GraphQuery = {}): void {
+    const requestId = activeRequestIdRef.current + 1;
+    activeRequestIdRef.current = requestId;
     setLoadState("loading");
     setErrorMessage(null);
-    return fetchSimilarityGraph(query);
+
+    void fetchSimilarityGraph(query)
+      .then((response) => {
+        if (!shouldHandleRequest(requestId)) {
+          return;
+        }
+
+        syncGraphState(response);
+      })
+      .catch((error: unknown) => {
+        if (!shouldHandleRequest(requestId)) {
+          return;
+        }
+
+        applyErrorState(error);
+      });
   }
 
   function syncGraphState(response: SimilarityGraphResponse): void {
@@ -213,25 +216,23 @@ export default function App() {
   function handleApplyFilters(event: React.FormEvent<HTMLFormElement>): void {
     event.preventDefault();
 
-    void loadGraph({
+    startGraphLoad({
       minClusterSize: parseInteger(minClusterSizeInput, graph?.filters.min_cluster_size ?? 1),
       minEdgeWeight: parseFloatValue(minEdgeWeightInput, graph?.filters.min_edge_weight ?? 0),
-    })
-      .then((response) => {
-        syncGraphState(response);
-      })
-      .catch((error: unknown) => {
-        applyErrorState(error);
-      });
+    });
   }
 
   function handlePlotlyClick(event: PlotlyClickEvent): void {
     const point = event.points?.[0];
-    const clickedRegionKey = resolveClickedRegionKey(graphRef.current?.nodes ?? [], point);
+    const clickedRegionKey = resolveClickedRegionKey(point);
 
     if (clickedRegionKey !== null) {
       setSelectedRegionKey(clickedRegionKey);
     }
+  }
+
+  function shouldHandleRequest(requestId: number): boolean {
+    return mountedRef.current && activeRequestIdRef.current === requestId;
   }
 }
 
@@ -257,23 +258,19 @@ function parseFloatValue(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
-function resolveClickedRegionKey(
-  nodes: SimilarityGraphNode[],
-  point: PlotlyClickPoint | undefined,
-): string | null {
+function resolveClickedRegionKey(point: PlotlyClickPoint | undefined): string | null {
   if (!point) {
     return null;
   }
 
-  const category =
-    typeof point.data?.name === "string" && point.data.name.length > 0 ? point.data.name : null;
-  const pointNumber =
-    typeof point.pointNumber === "number" && point.pointNumber >= 0 ? point.pointNumber : null;
-
-  if (category === null || pointNumber === null) {
-    return null;
+  if (typeof point.customdata === "string" && point.customdata.length > 0) {
+    return point.customdata;
   }
 
-  const categoryNodes = nodes.filter((node) => node.dominant_screen_category === category);
-  return categoryNodes[pointNumber]?.region_key ?? null;
+  if (Array.isArray(point.customdata)) {
+    const regionKey = point.customdata[0];
+    return typeof regionKey === "string" && regionKey.length > 0 ? regionKey : null;
+  }
+
+  return null;
 }

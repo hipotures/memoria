@@ -21,7 +21,7 @@ describe("buildSimilarityFigure", () => {
       type: "scattergl",
       mode: "markers",
       name: "social",
-      customdata: [["Social cluster", 21, "social", "telegram, chat", "Telegram"]],
+      customdata: [["region-social", "Social cluster", 21, "social", "telegram, chat", "Telegram"]],
     });
     expect(findTrace(figure, "research")).toMatchObject({
       type: "scattergl",
@@ -131,11 +131,22 @@ describe("buildSimilarityFigure", () => {
 
     expect(findTrace(figure, "social")).toMatchObject({
       hovertemplate:
-        "<b>%{customdata[0]}</b><br>" +
-        "items: %{customdata[1]}<br>" +
-        "screen category: %{customdata[2]}<br>" +
-        "top labels: %{customdata[3]}<br>" +
-        "top apps: %{customdata[4]}<extra></extra>",
+        "<b>%{customdata[1]}</b><br>" +
+        "items: %{customdata[2]}<br>" +
+        "screen category: %{customdata[3]}<br>" +
+        "top labels: %{customdata[4]}<br>" +
+        "top apps: %{customdata[5]}<extra></extra>",
+    });
+  });
+
+  it("emits region keys in per-point customdata for stable click selection", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      showLabels: true,
+      selectedRegionKey: null,
+    });
+
+    expect(findTrace(figure, "research")).toMatchObject({
+      customdata: [["region-research", "Research cluster", 17, "research", "browser, notes", "Chrome"]],
     });
   });
 });

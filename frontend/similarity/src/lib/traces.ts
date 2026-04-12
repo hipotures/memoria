@@ -55,6 +55,7 @@ export function buildSimilarityFigure(
       y: categoryNodes.map((node) => node.y),
       text: categoryNodes.map((node) => node.title),
       customdata: categoryNodes.map((node) => [
+        node.region_key,
         node.title,
         node.item_count,
         node.dominant_screen_category,
@@ -71,11 +72,11 @@ export function buildSimilarityFigure(
         },
       },
       hovertemplate:
-        "<b>%{customdata[0]}</b><br>" +
-        "items: %{customdata[1]}<br>" +
-        "screen category: %{customdata[2]}<br>" +
-        "top labels: %{customdata[3]}<br>" +
-        "top apps: %{customdata[4]}<extra></extra>",
+        "<b>%{customdata[1]}</b><br>" +
+        "items: %{customdata[2]}<br>" +
+        "screen category: %{customdata[3]}<br>" +
+        "top labels: %{customdata[4]}<br>" +
+        "top apps: %{customdata[5]}<extra></extra>",
     };
   });
 

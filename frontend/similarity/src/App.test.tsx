@@ -3,6 +3,7 @@ import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
+import { buildSimilarityRequestUrl } from "./api/client";
 import App from "./App";
 
 describe("App", () => {
@@ -14,6 +15,7 @@ describe("App", () => {
   let plotlyClickHandler:
     | ((event: {
         points?: Array<{
+          customdata?: unknown;
           data?: { name?: string };
           pointNumber?: number;
         }>;
@@ -60,7 +62,7 @@ describe("App", () => {
     container.remove();
   });
 
-  it("refetches with thresholds and adds a visual highlight trace for the clicked cluster", async () => {
+  it("refetches with thresholds and uses stable point identifiers for click selection", async () => {
     await act(async () => {
       root.render(<App />);
     });
@@ -85,8 +87,9 @@ describe("App", () => {
       plotlyClickHandler?.({
         points: [
           {
-            data: { name: "research" },
-            pointNumber: 0,
+            customdata: ["region-research", "Research cluster", 17, "research"],
+            data: { name: "social" },
+            pointNumber: 99,
           },
         ],
       });
@@ -110,6 +113,62 @@ describe("App", () => {
         symbol: "circle-open",
       },
     });
+  });
+
+  it("ignores stale filter responses when a newer apply request resolves first", async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Atlas source: screenshots_atlas_v1");
+
+    const staleRequest = createDeferredResponse();
+    const latestRequest = createDeferredResponse();
+    fetchMock.mockImplementationOnce(() => staleRequest.promise);
+    fetchMock.mockImplementationOnce(() => latestRequest.promise);
+
+    changeInputValue(findInput(container, "Min cluster size"), "8");
+    changeInputValue(findInput(container, "Min edge weight"), "0.55");
+    clickElement(findButton(container, "Apply graph filters"));
+
+    changeInputValue(findInput(container, "Min cluster size"), "3");
+    changeInputValue(findInput(container, "Min edge weight"), "0.2");
+    clickElement(findButton(container, "Apply graph filters"));
+
+    await waitForRequestCount(fetchMock, 3);
+    expect(requestPaths(fetchMock)).toEqual([
+      "/similarity/graph",
+      "/similarity/graph?min_cluster_size=8&min_edge_weight=0.55",
+      "/similarity/graph?min_cluster_size=3&min_edge_weight=0.2",
+    ]);
+
+    latestRequest.resolve(
+      jsonResponse(
+        buildGraphPayload({
+          atlasKey: "fresh-run",
+          minClusterSize: 3,
+          minEdgeWeight: 0.2,
+        }),
+      ),
+    );
+
+    await waitForText(container, "Atlas source: fresh-run");
+    await waitForText(container, "Active thresholds: cluster size 3, edge weight 0.2");
+
+    staleRequest.resolve(
+      jsonResponse(
+        buildGraphPayload({
+          atlasKey: "stale-run",
+          minClusterSize: 8,
+          minEdgeWeight: 0.55,
+        }),
+      ),
+    );
+
+    await flushMicrotasks();
+    expect(container.textContent).toContain("Atlas source: fresh-run");
+    expect(container.textContent).toContain("Active thresholds: cluster size 3, edge weight 0.2");
+    expect(container.textContent).not.toContain("Atlas source: stale-run");
   });
 
   it("surfaces Plotly init failures through the existing error UI", async () => {
@@ -137,6 +196,17 @@ describe("App", () => {
       return plotElement;
     });
   }
+});
+
+describe("buildSimilarityRequestUrl", () => {
+  it("serializes similarity threshold query params onto relative paths", () => {
+    expect(
+      buildSimilarityRequestUrl("/similarity/graph", {
+        minClusterSize: 8,
+        minEdgeWeight: 0.55,
+      }),
+    ).toBe("/similarity/graph?min_cluster_size=8&min_edge_weight=0.55");
+  });
 });
 
 async function waitForText(container: HTMLElement, text: string): Promise<void> {
@@ -179,6 +249,13 @@ async function waitForPlotUpdates(plotMock: ReturnType<typeof vi.fn>, count: num
   }
 
   throw new Error(`Timed out waiting for ${count} plot updates.`);
+}
+
+async function flushMicrotasks(): Promise<void> {
+  await act(async () => {
+    await Promise.resolve();
+    await Promise.resolve();
+  });
 }
 
 function requestPaths(fetchMock: ReturnType<typeof vi.fn>): string[] {
@@ -267,11 +344,34 @@ function jsonResponse(payload: unknown): Response {
   });
 }
 
-function buildGraphPayload() {
+function createDeferredResponse(): {
+  promise: Promise<Response>;
+  resolve: (response: Response) => void;
+} {
+  let resolvePromise: ((response: Response) => void) | null = null;
+  const promise = new Promise<Response>((resolve) => {
+    resolvePromise = resolve;
+  });
+
+  if (resolvePromise === null) {
+    throw new Error("Deferred response resolver was not initialized.");
+  }
+
+  return {
+    promise,
+    resolve: resolvePromise,
+  };
+}
+
+function buildGraphPayload(options?: {
+  atlasKey?: string;
+  minClusterSize?: number;
+  minEdgeWeight?: number;
+}) {
   return {
     run: {
       atlas_run_id: 7,
-      atlas_key: "screenshots_atlas_v1",
+      atlas_key: options?.atlasKey ?? "screenshots_atlas_v1",
       generated_at: "2026-04-12T10:30:00Z",
       source_count: 98,
     },
@@ -328,8 +428,8 @@ function buildGraphPayload() {
     ],
     filters: {
       connector_instance_id: null,
-      min_cluster_size: 2,
-      min_edge_weight: 0.25,
+      min_cluster_size: options?.minClusterSize ?? 2,
+      min_edge_weight: options?.minEdgeWeight ?? 0.25,
       app_hint: null,
       screen_category: null,
       observed_from: null,
