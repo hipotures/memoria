@@ -69,7 +69,6 @@ export default function App() {
         ],
       },
       {
-        displayModeBar: false,
         responsive: true,
       },
     );

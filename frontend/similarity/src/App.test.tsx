@@ -9,6 +9,7 @@ describe("App", () => {
   let container: HTMLDivElement;
   let root: Root;
   let fetchMock: ReturnType<typeof vi.fn>;
+  let newPlotMock: ReturnType<typeof vi.fn>;
 
   beforeEach(() => {
     container = document.createElement("div");
@@ -27,8 +28,9 @@ describe("App", () => {
 
     vi.stubGlobal("fetch", fetchMock);
     window.__PLOTLY_CDN_VERSION__ = "3.5.0";
+    newPlotMock = vi.fn(async () => undefined);
     window.Plotly = {
-      newPlot: vi.fn(async () => undefined),
+      newPlot: newPlotMock,
       react: vi.fn(async () => undefined),
     };
   });
@@ -48,6 +50,11 @@ describe("App", () => {
 
     await waitForText(container, "Cluster similarity network");
     expect(requestPaths(fetchMock)).toEqual(["/similarity/graph"]);
+    expect(newPlotMock).toHaveBeenCalledOnce();
+
+    const plotConfig = newPlotMock.mock.calls[0]?.[3];
+    expect(plotConfig).toMatchObject({ responsive: true });
+    expect(plotConfig).not.toHaveProperty("displayModeBar", false);
   });
 });
 
