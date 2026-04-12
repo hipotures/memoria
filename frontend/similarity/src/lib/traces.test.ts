@@ -21,6 +21,7 @@ describe("buildSimilarityFigure", () => {
       type: "scattergl",
       mode: "markers",
       name: "social",
+      customdata: [["Social cluster", 21, "social", "telegram, chat", "Telegram"]],
     });
     expect(figure.data[2]).toMatchObject({
       type: "scattergl",
@@ -71,7 +72,21 @@ describe("buildSimilarityFigure", () => {
     });
   });
 
-  it("omits labels when showLabels is false", () => {
+  it("keeps the selected region label visible when showLabels is false", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      showLabels: false,
+      selectedRegionKey: "region-research",
+    });
+
+    expect(figure.data[4]).toMatchObject({
+      mode: "text",
+      text: ["Research cluster"],
+      x: [0.68],
+      y: [0.23],
+    });
+  });
+
+  it("omits labels when showLabels is false and nothing is selected", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: false,
       selectedRegionKey: null,
@@ -82,6 +97,22 @@ describe("buildSimilarityFigure", () => {
       text: [],
       x: [],
       y: [],
+    });
+  });
+
+  it("formats hover content without exposing region keys or top entities", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      showLabels: true,
+      selectedRegionKey: null,
+    });
+
+    expect(figure.data[1]).toMatchObject({
+      hovertemplate:
+        "<b>%{customdata[0]}</b><br>" +
+        "items: %{customdata[1]}<br>" +
+        "screen category: %{customdata[2]}<br>" +
+        "top labels: %{customdata[3]}<br>" +
+        "top apps: %{customdata[4]}<extra></extra>",
     });
   });
 });

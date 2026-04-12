@@ -51,11 +51,11 @@ export function buildSimilarityFigure(
       y: categoryNodes.map((node) => node.y),
       text: categoryNodes.map((node) => node.title),
       customdata: categoryNodes.map((node) => [
-        node.region_key,
+        node.title,
         node.item_count,
+        node.dominant_screen_category,
         joinList(node.top_labels),
         joinList(node.top_apps),
-        joinList(node.top_entities),
       ]),
       marker: {
         size: categoryNodes.map((node) => node.size),
@@ -67,12 +67,11 @@ export function buildSimilarityFigure(
         },
       },
       hovertemplate:
-        "<b>%{text}</b><br>" +
-        "cluster: %{customdata[0]}<br>" +
+        "<b>%{customdata[0]}</b><br>" +
         "items: %{customdata[1]}<br>" +
-        "top labels: %{customdata[2]}<br>" +
-        "top apps: %{customdata[3]}<br>" +
-        "top entities: %{customdata[4]}<extra></extra>",
+        "screen category: %{customdata[2]}<br>" +
+        "top labels: %{customdata[3]}<br>" +
+        "top apps: %{customdata[4]}<extra></extra>",
     };
   });
 
@@ -166,13 +165,13 @@ function selectLabeledNodes(
   nodes: SimilarityGraphNode[],
   options: SimilarityFigureOptions,
 ): SimilarityGraphNode[] {
-  if (!options.showLabels) {
-    return [];
-  }
+  const labeledNodes = nodes.filter((node) => {
+    if (node.region_key === options.selectedRegionKey) {
+      return true;
+    }
 
-  const labeledNodes = nodes.filter(
-    (node) => node.is_labeled || node.region_key === options.selectedRegionKey,
-  );
+    return options.showLabels && node.is_labeled;
+  });
 
   return labeledNodes;
 }
