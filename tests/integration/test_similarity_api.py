@@ -4,10 +4,12 @@ import json
 from datetime import UTC
 from datetime import datetime
 from pathlib import Path
+from typing import Any
 
 from fastapi.testclient import TestClient
 from sqlalchemy.orm import Session
 
+import memoria.api.app as api_app_module
 from memoria.api.app import create_app
 from memoria.domain.models import AtlasEdge
 from memoria.domain.models import AtlasItem
@@ -86,19 +88,52 @@ def test_similarity_page_serves_built_frontend_and_bundle_assets(tmp_path: Path)
     assert "background" in style_response.text
 
 
+def test_similarity_page_rewrites_assets_with_root_path_prefix(tmp_path: Path) -> None:
+    frontend_dist_dir = _create_fake_frontend_dist(tmp_path)
+    client, _ = _create_test_client(
+        tmp_path,
+        "similarity-root-path.db",
+        similarity_frontend_dist_dir=frontend_dist_dir,
+        root_path="/proxy-prefix",
+    )
+
+    response = client.get("/similarity")
+
+    assert response.status_code == 200
+    assert 'href="/proxy-prefix/similarity/assets/app.css"' in response.text
+    assert 'src="/proxy-prefix/similarity/assets/app.js"' in response.text
+
+
+def test_similarity_create_test_client_uses_stub_runtime_engines(tmp_path: Path, monkeypatch) -> None:
+    def _unexpected_runtime_engine(*args: Any, **kwargs: Any) -> Any:
+        raise AssertionError("runtime engine factory should not be called in similarity route tests")
+
+    monkeypatch.setattr(api_app_module, "create_ocr_engine", _unexpected_runtime_engine)
+    monkeypatch.setattr(api_app_module, "create_vision_engine", _unexpected_runtime_engine)
+
+    client, _ = _create_test_client(tmp_path, "similarity-stub-engines.db")
+
+    response = client.get("/similarity")
+
+    assert response.status_code == 200
+
+
 def _create_test_client(
     tmp_path: Path,
     database_name: str,
     *,
     similarity_frontend_dist_dir: Path | None = None,
+    root_path: str = "",
 ) -> tuple[TestClient, object]:
     engine = create_test_engine(tmp_path, database_name)
     app = create_app(
         database_url=f"sqlite:///{tmp_path / database_name}",
         blob_dir=tmp_path / "blobs",
         similarity_frontend_dist_dir=similarity_frontend_dist_dir,
+        ocr_engine=_UnusedOcrEngine(),
+        vision_engine=_UnusedVisionEngine(),
     )
-    return TestClient(app), engine
+    return TestClient(app, root_path=root_path), engine
 
 
 def _seed_similarity_fixture(engine: object) -> None:
@@ -321,3 +356,13 @@ def _create_fake_frontend_dist(tmp_path: Path) -> Path:
     (assets_dir / "app.js").write_text("console.log('similarity bundle loaded');", encoding="utf-8")
     (assets_dir / "app.css").write_text("body { background: #f4f0e8; }", encoding="utf-8")
     return frontend_dist_dir
+
+
+class _UnusedOcrEngine:
+    def extract_text(self, image_bytes: bytes, *, media_type: str) -> Any:
+        raise AssertionError("unused in similarity route tests")
+
+
+class _UnusedVisionEngine:
+    def interpret(self, image_bytes: bytes, *, media_type: str, ocr_text: str | None = None) -> Any:
+        raise AssertionError("unused in similarity route tests")

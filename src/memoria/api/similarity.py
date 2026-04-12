@@ -8,6 +8,7 @@ from pathlib import Path
 from fastapi import APIRouter
 from fastapi import HTTPException
 from fastapi import Query
+from fastapi import Request
 from fastapi.responses import FileResponse
 from fastapi.responses import HTMLResponse
 from sqlalchemy.engine import Engine
@@ -22,10 +23,13 @@ def create_similarity_router(*, engine: Engine, frontend_dist_dir: Path) -> APIR
     router = APIRouter()
 
     @router.get("/similarity", response_class=HTMLResponse)
-    def get_similarity_page() -> str:
+    def get_similarity_page(request: Request) -> str:
         index_path = frontend_dist_dir / "index.html"
         if index_path.exists():
-            return _rewrite_frontend_asset_paths(index_path.read_text(encoding="utf-8"))
+            return _rewrite_frontend_asset_paths(
+                index_path.read_text(encoding="utf-8"),
+                asset_base_path=_similarity_asset_base_path(request),
+            )
         return _similarity_fallback_html()
 
     @router.get("/similarity/assets/{asset_path:path}")
@@ -123,13 +127,18 @@ def _similarity_fallback_html() -> str:
 </html>"""
 
 
-def _rewrite_frontend_asset_paths(html: str) -> str:
+def _similarity_asset_base_path(request: Request) -> str:
+    root_path = request.scope.get("root_path", "").rstrip("/")
+    return f"{root_path}/similarity" if root_path else "/similarity"
+
+
+def _rewrite_frontend_asset_paths(html: str, *, asset_base_path: str) -> str:
     def _replace(match: re.Match[str]) -> str:
         attribute = match.group(1)
         quote = match.group(2)
         raw_path = match.group(3)
         normalized = raw_path.removeprefix("./").removeprefix("/")
-        return f"{attribute}={quote}/similarity/{normalized}{quote}"
+        return f"{attribute}={quote}{asset_base_path}/{normalized}{quote}"
 
     return re.sub(
         r"""(src|href)=(["'])((?:/|\./)?assets/[^"']+)["']""",
