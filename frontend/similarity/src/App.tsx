@@ -207,10 +207,14 @@ export default function App() {
   }
 
   function applyErrorState(error: unknown): void {
+    setGraph(null);
+    setSelectedRegionKey(null);
     setLoadState("error");
     setErrorMessage(
       error instanceof Error ? error.message : "Could not load the similarity graph.",
     );
+    plotReadyRef.current = false;
+    stageRef.current?.replaceChildren();
   }
 
   function handleApplyFilters(event: React.FormEvent<HTMLFormElement>): void {

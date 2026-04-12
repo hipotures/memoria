@@ -183,6 +183,28 @@ describe("App", () => {
     expect(consoleErrorSpy).not.toHaveBeenCalled();
   });
 
+  it("clears stale graph details when a later apply request fails", async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Atlas source: screenshots_atlas_v1");
+
+    fetchMock.mockImplementationOnce(async () => {
+      return new Response("boom", { status: 503, statusText: "Service Unavailable" });
+    });
+
+    changeInputValue(findInput(container, "Min cluster size"), "9");
+    changeInputValue(findInput(container, "Min edge weight"), "0.6");
+    clickElement(findButton(container, "Apply graph filters"));
+
+    await waitForText(container, "Similarity request failed: 503 Service Unavailable");
+    expect(container.textContent).toContain("Waiting for graph payload");
+    expect(container.textContent).toContain("No edges yet");
+    expect(container.textContent).toContain("Atlas source unavailable");
+    expect(container.textContent).not.toContain("Atlas source: screenshots_atlas_v1");
+  });
+
   function bindPlotlyEvents(element: HTMLElement): void {
     const plotElement = element as HTMLElement & {
       on?: (eventName: string, handler: typeof plotlyClickHandler) => HTMLElement;
@@ -206,6 +228,15 @@ describe("buildSimilarityRequestUrl", () => {
         minEdgeWeight: 0.55,
       }),
     ).toBe("/similarity/graph?min_cluster_size=8&min_edge_weight=0.55");
+  });
+
+  it("keeps requests under the current root_path-aware similarity page when no origin is provided", () => {
+    expect(
+      buildSimilarityRequestUrl("/similarity/graph", {
+        currentPath: "/proxy-prefix/similarity",
+        minClusterSize: 8,
+      }),
+    ).toBe("/proxy-prefix/similarity/graph?min_cluster_size=8");
   });
 });
 

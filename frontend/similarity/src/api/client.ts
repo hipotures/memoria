@@ -4,6 +4,7 @@ type SimilarityClientOptions = {
   baseUrl?: string;
   minClusterSize?: number;
   minEdgeWeight?: number;
+  currentPath?: string;
 };
 
 export function fetchSimilarityGraph(
@@ -16,6 +17,7 @@ export function fetchSimilarityGraph(
       envOrigin: import.meta.env.VITE_SIMILARITY_API_ORIGIN,
       minClusterSize: options.minClusterSize,
       minEdgeWeight: options.minEdgeWeight,
+      currentPath: options.currentPath,
     },
   );
 }
@@ -27,6 +29,7 @@ async function similarityFetch(
     envOrigin?: string | null;
     minClusterSize?: number;
     minEdgeWeight?: number;
+    currentPath?: string;
   },
 ): Promise<SimilarityGraphResponse> {
   const response = await fetch(buildSimilarityRequestUrl(path, options));
@@ -45,11 +48,14 @@ export function buildSimilarityRequestUrl(
     envOrigin?: string | null;
     minClusterSize?: number;
     minEdgeWeight?: number;
+    currentPath?: string;
   } = {},
 ): string {
   const apiOrigin =
     normalizeSimilarityOrigin(options.baseUrl) ?? normalizeSimilarityOrigin(options.envOrigin);
-  const url = new URL(path, apiOrigin ?? "http://memoria.local");
+  const requestPath =
+    apiOrigin === null ? resolveSimilarityRequestPath(path, options.currentPath) : path;
+  const url = new URL(requestPath, apiOrigin ?? "http://memoria.local");
 
   if (options.minClusterSize !== undefined) {
     url.searchParams.set("min_cluster_size", String(options.minClusterSize));
@@ -66,6 +72,21 @@ export function buildSimilarityRequestUrl(
   return url.toString();
 }
 
+function resolveSimilarityRequestPath(path: string, currentPath?: string): string {
+  const normalizedCurrentPath = normalizeCurrentPath(currentPath);
+  const similaritySuffix = path.startsWith("/similarity/") ? path.slice("/similarity/".length) : null;
+
+  if (
+    normalizedCurrentPath !== null &&
+    similaritySuffix !== null &&
+    normalizedCurrentPath.endsWith("/similarity")
+  ) {
+    return `${normalizedCurrentPath}/${similaritySuffix}`;
+  }
+
+  return path;
+}
+
 function normalizeSimilarityOrigin(origin?: string | null): string | null {
   if (origin === undefined || origin === null) {
     return null;
@@ -73,4 +94,19 @@ function normalizeSimilarityOrigin(origin?: string | null): string | null {
 
   const trimmed = origin.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeCurrentPath(currentPath?: string): string | null {
+  const rawPath = currentPath ?? (typeof window === "undefined" ? null : window.location.pathname);
+
+  if (rawPath === null) {
+    return null;
+  }
+
+  const trimmed = rawPath.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
 }
