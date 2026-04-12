@@ -16,6 +16,7 @@ from memoria.api.schemas import AssistantQueryRequest
 from memoria.api.schemas import IngestScreenshotRequest
 from memoria.api.screenshots import create_screenshot_router
 from memoria.api.search import create_search_router
+from memoria.api.similarity import create_similarity_router
 from memoria.assistant.service import answer_question
 from memoria.domain.models import AssetInterpretation
 from memoria.ocr.engines import OcrEngine
@@ -39,6 +40,7 @@ def create_app(
     database_url: str | None = None,
     blob_dir: Path,
     atlas_frontend_dist_dir: Path | None = None,
+    similarity_frontend_dist_dir: Path | None = None,
     runtime_settings: RuntimeSettings | None = None,
     ocr_engine: OcrEngine | None = None,
     vision_engine: VisionEngine | None = None,
@@ -58,6 +60,12 @@ def create_app(
         create_atlas_router(
             engine=engine,
             frontend_dist_dir=atlas_frontend_dist_dir or project_root / "frontend/atlas/dist",
+        )
+    )
+    app.include_router(
+        create_similarity_router(
+            engine=engine,
+            frontend_dist_dir=similarity_frontend_dist_dir or project_root / "frontend/similarity/dist",
         )
     )
 
