@@ -30,8 +30,10 @@ Current repo state in the active worktree:
 - similarity backend already exists:
   - `src/memoria/similarity/service.py`
   - `src/memoria/api/similarity.py`
-- similarity frontend already exists:
+- similarity frontend is expected in the active worktree under:
   - `frontend/similarity`
+- the uploaded snapshot explicitly confirms backend routing and frontend bundle path assumptions
+  but may not include the full `frontend/similarity` source tree
 - atlas projection already persists:
   - `title`
   - `label_x`
@@ -305,6 +307,11 @@ Fallback order:
 2. `"{title} · {item_count}"`
 3. `"{title} · {region_key_suffix}"`
 
+Final rule:
+
+- if `duplicate_title_count > 1`, final `label` must be unique within the final response
+- if earlier disambiguation steps still collide, `region_key_suffix` becomes mandatory
+
 `region_key_suffix`:
 
 - use the last `6` characters of `region_key`
@@ -346,8 +353,9 @@ Compatibility:
 
 `support`:
 
-- snapshot value passed through from persisted atlas edge data
-- no reinterpretation inside similarity layer
+- remains a compatibility field in this iteration
+- because persisted atlas edge data does not currently store a separate support signal, `support` stays the placeholder value `1`
+- no migration is introduced to backfill or persist a real support value in this scope
 
 ### `SimilarityGraphResponse`
 
@@ -378,7 +386,13 @@ Required values for this iteration:
 
 - `min_cluster_size`
 - `min_edge_weight`
-- any active inherited item filters already supported by the request
+- `connector_instance_id`
+- `app_hint`
+- `screen_category`
+- `has_knowledge`
+- `observed_from`
+- `observed_to`
+- `search_query`
 
 `label_mode` is frontend state and does not need to round-trip through backend.
 
@@ -473,6 +487,8 @@ CTA:
 - `Evidence` -> `/atlas/evidence?region_key={region_key}`
 
 The summary box is lightweight by design. No inline screenshots or nested evidence explorer in this iteration.
+The summary box is populated only from the `/similarity/graph` node payload.
+`/atlas/regions/{region_key}` and `/atlas/evidence?region_key=...` are opened only through CTA, not eagerly fetched on node selection.
 
 ## Implementation Order
 
@@ -500,6 +516,15 @@ Outcome:
 
 - overview becomes readable
 - clicking a node yields a clear next step
+
+### Rollout Rule
+
+Stage 1 backend changes must remain additive-compatible until Stage 2 frontend is merged, or backend and frontend must ship atomically in one release.
+
+Practical rule for this iteration:
+
+- keep `reason` temporarily if existing consumers still read it
+- add new response fields without removing the old ones during the transition
 
 ### Stage 3: Polish
 
