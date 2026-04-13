@@ -210,11 +210,21 @@ def test_build_region_title_falls_back_to_two_semantic_labels_without_app() -> N
 
 def test_compute_label_anchor_offsets_from_region_center() -> None:
     anchor_x, anchor_y = _compute_label_anchor(
-        region_x=0.4,
-        region_y=0.5,
-        region_shape={"shape_type": "polygon", "rings": [[[0.35, 0.45], [0.45, 0.45], [0.45, 0.55], [0.35, 0.55]]]},
-        atlas_center=(0.5, 0.5),
+        region_x=40.0,
+        region_y=50.0,
+        region_shape={
+            "shape_type": "polygon",
+            "rings": [[
+                {"x": 35.0, "y": 45.0},
+                {"x": 45.0, "y": 45.0},
+                {"x": 45.0, "y": 55.0},
+                {"x": 35.0, "y": 55.0},
+            ]],
+        },
+        atlas_center=(50.0, 50.0),
     )
 
-    assert (anchor_x, anchor_y) != (0.4, 0.5)
-    assert anchor_y < 0.5 or anchor_x != 0.4
+    assert anchor_x > 40.0
+    assert anchor_y < 50.0
+    assert anchor_x - 40.0 >= 3.0
+    assert 50.0 - anchor_y >= 3.0

@@ -1123,8 +1123,8 @@ def _compute_label_anchor(
     atlas_center: tuple[float, float],
 ) -> tuple[float, float]:
     min_x, min_y, max_x, max_y = _region_bounds(region_shape)
-    span = max(max_x - min_x, max_y - min_y, 0.02)
-    offset = max(0.018, min(0.06, span * 0.35))
+    span = max(max_x - min_x, max_y - min_y, 1.0)
+    offset = max(3.0, min(12.0, span * 0.3))
     horizontal = -offset if region_x >= atlas_center[0] else offset
     vertical = -offset if region_y >= atlas_center[1] else offset
     return (region_x + horizontal, region_y + vertical)
