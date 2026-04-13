@@ -502,7 +502,12 @@ def _build_node_labels(
                 node.region_key,
             )
 
-    return _ensure_globally_unique_labels(raw_nodes=raw_nodes, candidate_labels=labels)
+    return _ensure_globally_unique_labels(
+        raw_nodes=raw_nodes,
+        candidate_labels=labels,
+        canonical_titles=canonical_titles,
+        duplicate_title_counts=duplicate_title_counts,
+    )
 
 
 def _build_legend(nodes: list[SimilarityGraphNode]) -> list[SimilarityGraphLegendEntry]:
@@ -601,11 +606,21 @@ def _ensure_globally_unique_labels(
     *,
     raw_nodes: list[_RawSimilarityGraphNode],
     candidate_labels: dict[str, str],
+    canonical_titles: dict[str, str],
+    duplicate_title_counts: Counter[str],
 ) -> dict[str, str]:
     unique_labels: dict[str, str] = {}
     used_labels: set[str] = set()
 
-    for node in raw_nodes:
+    ordered_nodes = sorted(
+        raw_nodes,
+        key=lambda node: (
+            duplicate_title_counts[canonical_titles[node.region_key]] > 1,
+            node.region_key,
+        ),
+    )
+
+    for node in ordered_nodes:
         base_label = candidate_labels.get(node.region_key, _display_title(node.title, node.region_key))
         final_label = _make_globally_unique_label(
             preferred_label=base_label,

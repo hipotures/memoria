@@ -137,6 +137,21 @@ def test_similarity_graph_guarantees_unique_labels_after_suffix_collision() -> N
     assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 #2"
 
 
+def test_similarity_graph_preserves_unique_title_label_when_duplicates_collide() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture_with_unique_title_collision(session)
+        graph = get_similarity_graph(session)
+
+    labels_by_region = {node.region_key: node.label for node in graph.nodes}
+
+    assert labels_by_region["region-z"] == "Chrome · xyz123"
+    assert labels_by_region["alpha-xyz123"] == "Chrome · xyz123 #2"
+    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 #3"
+
+
 def test_similarity_graph_keeps_legacy_is_labeled_semantics_for_blank_titles() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -449,6 +464,47 @@ def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Sessi
         app_hint="",
         semantic_summary="chrome tab bravo duplicate",
         object_refs=["topic:chrome", "entity:bob"],
+    )
+    session.commit()
+
+
+def _seed_similarity_fixture_with_unique_title_collision(session: Session) -> None:
+    _seed_similarity_fixture_with_duplicate_title_label_collision(session)
+
+    atlas_run_id = session.query(AtlasRun.id).scalar()
+    assert atlas_run_id is not None
+
+    session.add(
+        AtlasRegion(
+            atlas_run_id=atlas_run_id,
+            region_key="region-z",
+            parent_region_key=None,
+            level=0,
+            title="Chrome · xyz123",
+            x=0.82,
+            y=0.12,
+            label_x=0.86,
+            label_y=0.16,
+            region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+            item_count=1,
+            top_labels_json=json.dumps(["prefilled"]),
+            top_apps_json=json.dumps([]),
+            top_people_json=json.dumps([]),
+            top_entities_json=json.dumps([]),
+            representatives_json=json.dumps([{"rank": 1, "source_item_id": 601}]),
+            bridge_neighbors_json=json.dumps([]),
+            cohesion_score=0.7,
+        )
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run_id,
+        source_item_id=601,
+        region_key="region-z",
+        screen_category="notes",
+        app_hint="",
+        semantic_summary="prefilled unique title region",
+        object_refs=["topic:prefilled"],
     )
     session.commit()
 
