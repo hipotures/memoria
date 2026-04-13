@@ -1154,10 +1154,10 @@ def _summarize_points(
         if point.observed_at is not None:
             observed_values.append(point.observed_at)
 
-    top_labels = [label for label, _count in label_counts.most_common(4)]
-    top_apps = [app for app, _count in app_counts.most_common(3)]
-    top_people = [person for person, _count in people_counts.most_common(3)]
-    top_entities = [entity for entity, _count in entity_counts.most_common(5)]
+    top_labels = _sorted_counter_values(label_counts, limit=4)
+    top_apps = _sorted_counter_values(app_counts, limit=3)
+    top_people = _sorted_counter_values(people_counts, limit=3)
+    top_entities = _sorted_counter_values(entity_counts, limit=5)
     title = _build_region_title(
         top_labels=top_labels,
         top_apps=top_apps,
@@ -1173,6 +1173,13 @@ def _summarize_points(
         "time_end": max(observed_values) if observed_values else None,
         "time_start": min(observed_values) if observed_values else None,
     }
+
+
+def _sorted_counter_values(counter: Counter[str], *, limit: int) -> list[str]:
+    return [
+        value
+        for value, _count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
 
 
 def _normalize_title_token(value: str) -> str | None:

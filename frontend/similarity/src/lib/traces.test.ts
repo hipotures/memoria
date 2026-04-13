@@ -51,6 +51,9 @@ describe("buildSimilarityFigure", () => {
     expect(figure.layout).toMatchObject({
       paper_bgcolor: "#001f2d",
       plot_bgcolor: "#001f2d",
+      title: {
+        text: "Memoria screenshots — region similarity graph (semantic similarity edges)",
+      },
       legend: {
         x: 1.02,
         y: 1,
@@ -317,15 +320,39 @@ describe("buildSimilarityFigure", () => {
     });
   });
 
-  it("keeps only ego-network edges for the selected region", () => {
+  it("keeps the full visible graph while emphasizing the selected region neighborhood", () => {
     const figure = buildSimilarityFigure(
       graphFixture,
-      figureOptions("default", "region-social", new Set(["social", "research", "utility"])),
+      figureOptions("default", "region-social", new Set(["social", "research", "utility", "workflow"])),
     );
 
     expect(figure.data[0]).toMatchObject({
+      x: [0.12, 0.68, null, 0.12, -0.3, null, 0.68, 1.05, null],
+      y: [0.44, 0.23, null, 0.44, -0.2, null, 0.23, -0.05, null],
+    });
+    expect(findTrace(figure, "selected-neighborhood-edges")).toMatchObject({
       x: [0.12, 0.68, null, 0.12, -0.3, null],
       y: [0.44, 0.23, null, 0.44, -0.2, null],
+    });
+    expect(findTrace(figure, "social")).toMatchObject({
+      marker: {
+        opacity: [1],
+      },
+    });
+    expect(findTrace(figure, "research")).toMatchObject({
+      marker: {
+        opacity: [0.92],
+      },
+    });
+    expect(findTrace(figure, "utility")).toMatchObject({
+      marker: {
+        opacity: [0.92],
+      },
+    });
+    expect(findTrace(figure, "workflow")).toMatchObject({
+      marker: {
+        opacity: [0.22],
+      },
     });
   });
 });
@@ -401,6 +428,27 @@ const graphFixture = {
       is_labeled: true,
       representative_source_item_ids: [30],
     },
+    {
+      region_key: "region-workflow",
+      title: "Workflow cluster",
+      label: "automation · review queue",
+      canonical_title: "Workflow cluster",
+      duplicate_title_count: 1,
+      x: 1.05,
+      y: -0.05,
+      label_x: 1.14,
+      label_y: -0.08,
+      size: 14,
+      item_count: 8,
+      degree: 1,
+      label_priority: 6,
+      dominant_screen_category: "workflow",
+      top_labels: ["automation", "review queue"],
+      top_apps: ["Linear"],
+      top_entities: [],
+      is_labeled: false,
+      representative_source_item_ids: [41],
+    },
   ],
   edges: [
     {
@@ -409,7 +457,7 @@ const graphFixture = {
       weight: 0.61,
       support: 9,
       edge_type: "semantic_similarity",
-      reason: "shared_topic_task_signature",
+      reason: "semantic_similarity",
     },
     {
       source_region_key: "region-social",
@@ -417,7 +465,15 @@ const graphFixture = {
       weight: 0.44,
       support: 4,
       edge_type: "semantic_similarity",
-      reason: "shared_topic_task_signature",
+      reason: "semantic_similarity",
+    },
+    {
+      source_region_key: "region-research",
+      target_region_key: "region-workflow",
+      weight: 0.31,
+      support: 3,
+      edge_type: "semantic_similarity",
+      reason: "semantic_similarity",
     },
   ],
   legend: [
@@ -436,6 +492,11 @@ const graphFixture = {
       color: "#7f8c8d",
       count: 1,
     },
+    {
+      category: "workflow",
+      color: "#80a1d4",
+      count: 1,
+    },
   ],
   filters: {
     min_cluster_size: 2,
@@ -446,8 +507,8 @@ const graphFixture = {
     has_knowledge: null,
     search_query: null,
   },
-  graph_kind: "semantic_regions",
-  edge_scope: "all",
+  graph_kind: "region_similarity",
+  edge_scope: "atlas_snapshot",
   default_label_limit: 2,
 } as SimilarityGraphResponse;
 
@@ -459,7 +520,7 @@ const legacyGraphFixture = {
 
     return {
       ...legacyNode,
-      is_labeled: index !== 1,
+      is_labeled: index === 0 || index === 2,
     };
   }),
 } as SimilarityGraphResponse;

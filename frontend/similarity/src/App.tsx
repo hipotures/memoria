@@ -129,10 +129,10 @@ export default function App() {
     <main className="similarity-app-shell">
       <section className="similarity-hero">
         <p className="similarity-hero__eyebrow">Semantic atlas restart</p>
-        <h1>Cluster similarity network</h1>
+        <h1>Region similarity graph</h1>
         <p className="similarity-hero__lede">
-          Region-to-region semantic similarity across atlas regions, with lightweight handoff into
-          atlas drill-down.
+          Atlas regions linked by semantic similarity, with lightweight handoff into atlas
+          drill-down.
         </p>
         <p>{graph ? `Graph kind: ${graph.graph_kind}` : "Graph kind unavailable"}</p>
         <p>{graph ? `Edge scope: ${graph.edge_scope}` : "Edge scope unavailable"}</p>
@@ -146,14 +146,14 @@ export default function App() {
           </div>
           <div className="similarity-stage-card__meta" aria-label="Similarity graph summary">
             <span>{statusLabel(loadState)}</span>
-            <span>{graph ? `${graph.nodes.length} clusters` : "Waiting for graph payload"}</span>
+            <span>{graph ? `${graph.nodes.length} regions` : "Waiting for graph payload"}</span>
             <span>{graph ? `${graph.edges.length} edges` : "No edges yet"}</span>
           </div>
         </header>
 
         <form className="similarity-controls" onSubmit={handleApplyFilters}>
           <label className="similarity-control">
-            <span className="similarity-control__label">Min cluster size</span>
+            <span className="similarity-control__label">Min region size</span>
             <input
               className="similarity-control__input"
               type="number"
@@ -252,11 +252,11 @@ export default function App() {
             CDN Plotly version: <code>{window.__PLOTLY_CDN_VERSION__ ?? "missing"}</code>
           </p>
           <p>
-            Active thresholds: cluster size{" "}
+            Active thresholds: region size{" "}
             <code>{graph?.filters.min_cluster_size ?? minClusterSizeInput}</code>, edge weight{" "}
             <code>{graph?.filters.min_edge_weight ?? minEdgeWeightInput}</code>
           </p>
-          <p>{selectedNode ? `Selected cluster: ${selectedNode.title}` : "Selected cluster: none"}</p>
+          <p>{selectedNode ? `Selected region: ${selectedNode.title}` : "Selected region: none"}</p>
           <p>{graph?.run ? `Atlas source: ${graph.run.atlas_key}` : "Atlas source unavailable"}</p>
         </footer>
       </section>

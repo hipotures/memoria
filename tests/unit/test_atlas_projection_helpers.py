@@ -15,6 +15,8 @@ def _make_point(
     *,
     cluster_hints: list[str] | None = None,
     app_hint: str | None = None,
+    searchable_labels: list[str] | None = None,
+    object_refs: list[str] | None = None,
 ) -> _AtlasPoint:
     return _AtlasPoint(
         source_item_id=1,
@@ -28,9 +30,9 @@ def _make_point(
         screen_category="chat",
         has_knowledge=False,
         observed_at=None,
-        object_refs=[],
+        object_refs=object_refs or [],
         knowledge_count=0,
-        searchable_labels=[],
+        searchable_labels=searchable_labels or [],
         cluster_hints=cluster_hints or [],
     )
 
@@ -206,6 +208,45 @@ def test_build_region_title_falls_back_to_two_semantic_labels_without_app() -> N
     )
 
     assert summary["title"] == "delivery status, refund tracking"
+
+
+def test_summarize_points_breaks_frequency_ties_by_text_value() -> None:
+    summary = _summarize_points(
+        [
+            _make_point(
+                cluster_hints=["beta", "zebra"],
+                app_hint="zoom",
+                object_refs=["person:zoe", "entity:zeta"],
+            ),
+            _make_point(
+                cluster_hints=["alpha", "beta"],
+                app_hint="apple",
+                object_refs=["person:adam", "entity:alpha"],
+            ),
+            _make_point(
+                cluster_hints=["alpha", "zebra"],
+                app_hint="zoom",
+                object_refs=["person:zoe", "entity:zeta"],
+            ),
+            _make_point(
+                cluster_hints=["alpha", "beta"],
+                app_hint="apple",
+                object_refs=["person:adam", "entity:alpha"],
+            ),
+        ],
+        fallback_title="cluster-003",
+    )
+
+    assert summary["title"] == "apple · alpha"
+    assert summary["top_labels"] == ["alpha", "beta", "zebra"]
+    assert summary["top_apps"] == ["apple", "zoom"]
+    assert summary["top_people"] == ["person:adam", "person:zoe"]
+    assert summary["top_entities"] == [
+        "entity:alpha",
+        "entity:zeta",
+        "person:adam",
+        "person:zoe",
+    ]
 
 
 def test_compute_label_anchor_offsets_from_region_center() -> None:

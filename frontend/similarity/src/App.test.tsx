@@ -82,10 +82,10 @@ describe("App", () => {
       root.render(<App />);
     });
 
-    await waitForText(container, "Cluster similarity network");
+    await waitForText(container, "Region similarity graph");
     await waitForText(container, "Label mode");
 
-    changeInputValue(findInput(container, "Min cluster size"), "8");
+    changeInputValue(findInput(container, "Min region size"), "8");
     changeInputValue(findInput(container, "Min edge weight"), "0.55");
     clickElement(findButton(container, "Apply graph filters"));
 
@@ -198,7 +198,7 @@ describe("App", () => {
       root.render(<App />);
     });
 
-    await waitForText(container, "Cluster similarity network");
+    await waitForText(container, "Region similarity graph");
 
     act(() => {
       plotlyClickHandler?.({
@@ -212,7 +212,7 @@ describe("App", () => {
       });
     });
 
-    await waitForText(container, "Selected cluster: Research cluster");
+    await waitForText(container, "Selected region: Research cluster");
     const baselinePlotUpdates = reactMock.mock.calls.length;
 
     act(() => {
@@ -224,7 +224,7 @@ describe("App", () => {
     });
 
     await waitForPlotUpdates(reactMock, baselinePlotUpdates + 1);
-    expect(container.textContent).toContain("Selected cluster: none");
+    expect(container.textContent).toContain("Selected region: none");
     const lastFigureData = reactMock.mock.calls.at(-1)?.[1] as Array<Record<string, unknown>>;
     expect(lastFigureData.find((trace) => trace.name === "selected-highlight")).toBeUndefined();
     expect(lastFigureData[0]).toMatchObject({
@@ -247,9 +247,9 @@ describe("App", () => {
     expect(controlGroups).toHaveLength(3);
     expect(
       controlGroups.map((group) => group.querySelector(".similarity-control__label")?.textContent),
-    ).toEqual(["Min cluster size", "Min edge weight", "Label mode"]);
+    ).toEqual(["Min region size", "Min edge weight", "Label mode"]);
 
-    expect(findInput(container, "Min cluster size").classList.contains("similarity-control__input")).toBe(true);
+    expect(findInput(container, "Min region size").classList.contains("similarity-control__input")).toBe(true);
     expect(findInput(container, "Min edge weight").classList.contains("similarity-control__input")).toBe(true);
     expect(findSelect(container, "Label mode").classList.contains("similarity-control__select")).toBe(true);
     expect(findButton(container, "Apply graph filters").classList.contains("similarity-controls__submit")).toBe(true);
@@ -267,11 +267,11 @@ describe("App", () => {
     fetchMock.mockImplementationOnce(() => staleRequest.promise);
     fetchMock.mockImplementationOnce(() => latestRequest.promise);
 
-    changeInputValue(findInput(container, "Min cluster size"), "8");
+    changeInputValue(findInput(container, "Min region size"), "8");
     changeInputValue(findInput(container, "Min edge weight"), "0.55");
     clickElement(findButton(container, "Apply graph filters"));
 
-    changeInputValue(findInput(container, "Min cluster size"), "3");
+    changeInputValue(findInput(container, "Min region size"), "3");
     changeInputValue(findInput(container, "Min edge weight"), "0.2");
     clickElement(findButton(container, "Apply graph filters"));
 
@@ -293,7 +293,7 @@ describe("App", () => {
     );
 
     await waitForText(container, "Atlas source: fresh-run");
-    await waitForText(container, "Active thresholds: cluster size 3, edge weight 0.2");
+    await waitForText(container, "Active thresholds: region size 3, edge weight 0.2");
 
     staleRequest.resolve(
       jsonResponse(
@@ -307,7 +307,7 @@ describe("App", () => {
 
     await flushMicrotasks();
     expect(container.textContent).toContain("Atlas source: fresh-run");
-    expect(container.textContent).toContain("Active thresholds: cluster size 3, edge weight 0.2");
+    expect(container.textContent).toContain("Active thresholds: region size 3, edge weight 0.2");
     expect(container.textContent).not.toContain("Atlas source: stale-run");
   });
 
@@ -334,7 +334,7 @@ describe("App", () => {
       return new Response("boom", { status: 503, statusText: "Service Unavailable" });
     });
 
-    changeInputValue(findInput(container, "Min cluster size"), "9");
+    changeInputValue(findInput(container, "Min region size"), "9");
     changeInputValue(findInput(container, "Min edge weight"), "0.6");
     clickElement(findButton(container, "Apply graph filters"));
 
@@ -638,7 +638,7 @@ function buildGraphPayload(options?: {
         weight: 0.61,
         support: 9,
         edge_type: "semantic_similarity",
-        reason: "shared_topic_task_signature",
+        reason: "semantic_similarity",
       },
     ],
     legend: [
@@ -664,8 +664,8 @@ function buildGraphPayload(options?: {
       has_knowledge: null,
       search_query: null,
     },
-    graph_kind: "region similarity",
-    edge_scope: "atlas regions",
+    graph_kind: "region_similarity",
+    edge_scope: "atlas_snapshot",
     default_label_limit: 1,
   };
 }

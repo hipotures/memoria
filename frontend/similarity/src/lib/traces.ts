@@ -45,8 +45,13 @@ export function buildSimilarityFigure(
     graph.edges,
     allNodesByRegionKey,
     options.visibleCategories,
-    selectedNode?.region_key ?? null,
   );
+  const selectedNeighborhood =
+    selectedNode === null ? null : collectSelectedNeighborhood(visibleEdges, selectedNode.region_key);
+  const selectedNeighborhoodEdges =
+    selectedNode === null
+      ? []
+      : visibleEdges.filter((edge) => edgeTouchesSelection(edge, selectedNode.region_key));
   const defaultLabelLimit = graph.default_label_limit ?? 20;
 
   const edgeTrace = {
@@ -56,8 +61,8 @@ export function buildSimilarityFigure(
     showlegend: false,
     line: {
       color:
-        selectedNode === null ? "rgba(180,220,220,0.18)" : "rgba(214,232,239,0.34)",
-      width: selectedNode === null ? 0.7 : 1.2,
+        selectedNode === null ? "rgba(180,220,220,0.18)" : "rgba(180,220,220,0.08)",
+      width: 0.7,
     },
     x: edgeCoordinates(visibleEdges, allNodesByRegionKey, "x"),
     y: edgeCoordinates(visibleEdges, allNodesByRegionKey, "y"),
@@ -89,7 +94,9 @@ export function buildSimilarityFigure(
       marker: {
         size: categoryNodes.map((node) => node.size),
         color: categoryColor,
-        opacity: 0.9,
+        opacity: categoryNodes.map((node) =>
+          resolveNodeOpacity(node, selectedNode, selectedNeighborhood),
+        ),
         line: {
           color: "rgba(255,255,255,0.4)",
           width: 0.8,
@@ -104,6 +111,23 @@ export function buildSimilarityFigure(
         "top apps: %{customdata[5]}<extra></extra>",
     };
   });
+
+  const selectedNeighborhoodEdgeTrace =
+    selectedNeighborhoodEdges.length === 0
+      ? null
+      : {
+          type: "scattergl",
+          mode: "lines",
+          name: "selected-neighborhood-edges",
+          hoverinfo: "skip",
+          showlegend: false,
+          line: {
+            color: "rgba(148,217,255,0.72)",
+            width: 1.8,
+          },
+          x: edgeCoordinates(selectedNeighborhoodEdges, allNodesByRegionKey, "x"),
+          y: edgeCoordinates(selectedNeighborhoodEdges, allNodesByRegionKey, "y"),
+        };
 
   const highlightTrace =
     selectedNode === null
@@ -149,9 +173,13 @@ export function buildSimilarityFigure(
   };
 
   const traces =
-    highlightTrace === null
-      ? [edgeTrace, ...nodeTraces, labelTrace]
-      : [edgeTrace, ...nodeTraces, highlightTrace, labelTrace];
+    [
+      edgeTrace,
+      ...nodeTraces,
+      ...(selectedNeighborhoodEdgeTrace === null ? [] : [selectedNeighborhoodEdgeTrace]),
+      ...(highlightTrace === null ? [] : [highlightTrace]),
+      labelTrace,
+    ];
 
   return {
     data: traces,
@@ -159,7 +187,7 @@ export function buildSimilarityFigure(
       paper_bgcolor: "#001f2d",
       plot_bgcolor: "#001f2d",
       title: {
-        text: "Memoria screenshots — cluster similarity network (shared topic/task signatures)",
+        text: "Memoria screenshots — region similarity graph (semantic similarity edges)",
         x: 0.02,
       },
       font: {
@@ -229,7 +257,6 @@ function filterVisibleEdges(
   edges: SimilarityGraphEdge[],
   nodesByRegionKey: Map<string, SimilarityGraphNode>,
   visibleCategories: Set<string> | null,
-  selectedRegionKey: string | null,
 ): SimilarityGraphEdge[] {
   return edges.filter((edge) => {
     const source = nodesByRegionKey.get(edge.source_region_key);
@@ -246,12 +273,7 @@ function filterVisibleEdges(
     ) {
       return false;
     }
-
-    if (selectedRegionKey === null) {
-      return true;
-    }
-
-    return edge.source_region_key === selectedRegionKey || edge.target_region_key === selectedRegionKey;
+    return true;
   });
 }
 
@@ -310,6 +332,31 @@ function hashCategory(category: string): number {
   return hash;
 }
 
+function collectSelectedNeighborhood(
+  edges: SimilarityGraphEdge[],
+  selectedRegionKey: string,
+): Set<string> {
+  const neighborhood = new Set<string>([selectedRegionKey]);
+
+  for (const edge of edges) {
+    if (edge.source_region_key === selectedRegionKey) {
+      neighborhood.add(edge.target_region_key);
+    }
+
+    if (edge.target_region_key === selectedRegionKey) {
+      neighborhood.add(edge.source_region_key);
+    }
+  }
+
+  return neighborhood;
+}
+
+function edgeTouchesSelection(edge: SimilarityGraphEdge, selectedRegionKey: string): boolean {
+  return (
+    edge.source_region_key === selectedRegionKey || edge.target_region_key === selectedRegionKey
+  );
+}
+
 function edgeCoordinates(
   edges: SimilarityGraphEdge[],
   nodesByRegionKey: Map<string, SimilarityGraphNode>,
@@ -329,6 +376,26 @@ function edgeCoordinates(
   }
 
   return coordinates;
+}
+
+function resolveNodeOpacity(
+  node: SimilarityGraphNode,
+  selectedNode: SimilarityGraphNode | null,
+  selectedNeighborhood: Set<string> | null,
+): number {
+  if (selectedNode === null || selectedNeighborhood === null) {
+    return 0.9;
+  }
+
+  if (node.region_key === selectedNode.region_key) {
+    return 1;
+  }
+
+  if (selectedNeighborhood.has(node.region_key)) {
+    return 0.92;
+  }
+
+  return 0.22;
 }
 
 function selectLabeledNodes(
