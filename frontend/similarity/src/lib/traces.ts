@@ -34,7 +34,6 @@ export function buildSimilarityFigure(
   graph: SimilarityGraphResponse,
   options: SimilarityFigureOptions,
 ): SimilarityFigure {
-  const labelMode = resolveLabelMode(options);
   const allNodesByRegionKey = new Map(graph.nodes.map((node) => [node.region_key, node]));
   const visibleNodes = filterVisibleNodes(graph.nodes, options.visibleCategories);
   const nodesByRegionKey = new Map(visibleNodes.map((node) => [node.region_key, node]));
@@ -130,7 +129,7 @@ export function buildSimilarityFigure(
 
   const labeledNodes = selectLabeledNodes(
     visibleNodes,
-    { ...options, labelMode },
+    options,
     selectedNode,
     defaultLabelLimit,
   );
@@ -338,18 +337,57 @@ function selectLabeledNodes(
   selectedNode: SimilarityGraphNode | null,
   defaultLabelLimit: number,
 ): SimilarityGraphNode[] {
-  if (options.labelMode === "none") {
+  if (usesLegacyShowLabelsCompatibility(options)) {
+    return selectLegacyLabeledNodes(nodes, options.showLabels ?? true, selectedNode, defaultLabelLimit);
+  }
+
+  const labelMode = resolveLabelMode(options);
+
+  if (labelMode === "none") {
     return [];
   }
 
-  if (options.labelMode === "selected") {
+  if (labelMode === "selected") {
     return selectedNode ? [selectedNode] : [];
   }
 
-  if (options.labelMode === "all") {
+  if (labelMode === "all") {
     return nodes;
   }
 
+  return selectDefaultLabeledNodes(nodes, defaultLabelLimit);
+}
+
+function joinList(values: string[]): string {
+  if (values.length === 0) {
+    return "none";
+  }
+
+  return values.join(", ");
+}
+
+function usesLegacyShowLabelsCompatibility(options: SimilarityFigureOptions): boolean {
+  return options.labelMode === undefined && options.showLabels !== undefined;
+}
+
+function selectLegacyLabeledNodes(
+  nodes: SimilarityGraphNode[],
+  showLabels: boolean,
+  selectedNode: SimilarityGraphNode | null,
+  defaultLabelLimit: number,
+): SimilarityGraphNode[] {
+  if (!showLabels) {
+    return selectedNode ? [selectedNode] : [];
+  }
+
+  const labeledNodes = selectDefaultLabeledNodes(nodes, defaultLabelLimit);
+  return includeSelectedNode(labeledNodes, selectedNode);
+}
+
+function selectDefaultLabeledNodes(
+  nodes: SimilarityGraphNode[],
+  defaultLabelLimit: number,
+): SimilarityGraphNode[] {
   const nodesWithRenderMetadata = nodes.filter(hasBackendLabelMetadata);
   if (nodesWithRenderMetadata.length > 0) {
     return [...nodesWithRenderMetadata]
@@ -364,12 +402,19 @@ function selectLabeledNodes(
   return nodes.filter((node) => isLegacyLabeledNode(node));
 }
 
-function joinList(values: string[]): string {
-  if (values.length === 0) {
-    return "none";
+function includeSelectedNode(
+  nodes: SimilarityGraphNode[],
+  selectedNode: SimilarityGraphNode | null,
+): SimilarityGraphNode[] {
+  if (selectedNode === null) {
+    return nodes;
   }
 
-  return values.join(", ");
+  if (nodes.some((node) => node.region_key === selectedNode.region_key)) {
+    return nodes;
+  }
+
+  return [...nodes, selectedNode];
 }
 
 function hasBackendLabelMetadata(node: SimilarityGraphNode): boolean {

@@ -134,14 +134,28 @@ describe("buildSimilarityFigure", () => {
     });
   });
 
-  it("preserves legacy showLabels compatibility for current callers", () => {
+  it("preserves the legacy selected-label behavior when showLabels is false", () => {
     const figure = buildSimilarityFigure(graphFixture, legacyFigureOptions(false, "region-research"));
 
     expect(findTextTrace(figure)).toMatchObject({
       mode: "text",
-      text: [],
-      x: [],
-      y: [],
+      text: ["chrome · dns management"],
+      x: [0.32],
+      y: [0.44],
+    });
+  });
+
+  it("keeps the selected node labeled for legacy showLabels callers", () => {
+    const figure = buildSimilarityFigure(graphFixture, legacyFigureOptions(true, "region-utility"));
+
+    expect(findTextTrace(figure)).toMatchObject({
+      text: [
+        "chrome · dns management",
+        "tiktok · live streaming",
+        "settings · battery saver",
+      ],
+      x: [0.32, 0.32, -0.22],
+      y: [0.44, 0.44, -0.26],
     });
   });
 
