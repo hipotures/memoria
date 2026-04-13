@@ -61,7 +61,7 @@ export function buildSimilarityFigure(
     showlegend: false,
     line: {
       color:
-        selectedNode === null ? "rgba(180,220,220,0.18)" : "rgba(180,220,220,0.08)",
+        selectedNode === null ? "rgba(180,220,220,0.18)" : "rgba(180,220,220,0.05)",
       width: 0.7,
     },
     x: edgeCoordinates(visibleEdges, allNodesByRegionKey, "x"),
@@ -160,22 +160,28 @@ export function buildSimilarityFigure(
     selectedNode,
     defaultLabelLimit,
   );
+  const labelText = labeledNodes.map((node) => resolveNodeLabel(node));
+  const labelX = labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "x"));
+  const labelY = labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "y"));
+  const labelCustomdata = labeledNodes.map((node) => node.region_key);
   const labelTrace = {
     type: "scattergl",
     mode: "text",
+    name: "labels",
     showlegend: false,
     hoverinfo: "skip",
-    text: labeledNodes.map((node) => resolveNodeLabel(node)),
-    x: labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "x")),
-    y: labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "y")),
-    customdata: labeledNodes.map((node) => node.region_key),
+    text: labelText,
+    x: labelX,
+    y: labelY,
+    customdata: labelCustomdata,
     textposition: "middle center",
     textfont: {
-      color: "rgba(235,240,245,0.92)",
+      color: labeledNodes.map((node) =>
+        resolveLabelColor(node, selectedNode, selectedNeighborhood),
+      ),
       size: 11,
     },
   };
-
   const traces =
     [
       edgeTrace,
@@ -396,10 +402,72 @@ function resolveNodeOpacity(
   }
 
   if (selectedNeighborhood.has(node.region_key)) {
-    return 0.92;
+    return 0.94;
   }
 
-  return 0.22;
+  return 0.12;
+}
+
+function resolveLabelColor(
+  node: SimilarityGraphNode,
+  selectedNode: SimilarityGraphNode | null,
+  selectedNeighborhood: Set<string> | null,
+): string {
+  const baseColor = resolveCategoryColor(node.dominant_screen_category, "#6EC5FF");
+  const darkText = withAlpha("#07121A", 0.96);
+  const darkMuted = withAlpha("#07121A", 0.34);
+  const darkFaint = withAlpha("#07121A", 0.12);
+  const lightText = withAlpha("#F5F8FA", 0.96);
+  const lightMuted = withAlpha("#D2DCE6", 0.42);
+  const lightFaint = withAlpha("#D2DCE6", 0.18);
+  const prefersDarkText = colorLuminance(baseColor) >= 0.58;
+  const labelSitsOnNode = isLabelAnchoredOnNode(node);
+
+  if (selectedNode === null || selectedNeighborhood === null) {
+    return labelSitsOnNode && prefersDarkText ? darkText : lightText;
+  }
+
+  if (node.region_key === selectedNode.region_key) {
+    return labelSitsOnNode && prefersDarkText ? darkText : lightText;
+  }
+
+  if (selectedNeighborhood.has(node.region_key)) {
+    return labelSitsOnNode && prefersDarkText ? darkMuted : lightMuted;
+  }
+
+  return labelSitsOnNode && prefersDarkText ? darkFaint : lightFaint;
+}
+
+function isLabelAnchoredOnNode(node: SimilarityGraphNode): boolean {
+  const labelX = resolveNodeLabelCoordinate(node, "x");
+  const labelY = resolveNodeLabelCoordinate(node, "y");
+  return Math.abs(labelX - node.x) <= 0.015 && Math.abs(labelY - node.y) <= 0.015;
+}
+
+function colorLuminance(color: string): number {
+  const hex = color.replace("#", "");
+  if (hex.length !== 6) {
+    return 0;
+  }
+
+  const red = Number.parseInt(hex.slice(0, 2), 16) / 255;
+  const green = Number.parseInt(hex.slice(2, 4), 16) / 255;
+  const blue = Number.parseInt(hex.slice(4, 6), 16) / 255;
+
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function withAlpha(hexColor: string, alpha: number): string {
+  const hex = hexColor.replace("#", "");
+  if (hex.length !== 6) {
+    return hexColor;
+  }
+
+  const red = Number.parseInt(hex.slice(0, 2), 16);
+  const green = Number.parseInt(hex.slice(2, 4), 16);
+  const blue = Number.parseInt(hex.slice(4, 6), 16);
+
+  return `rgba(${red},${green},${blue},${alpha})`;
 }
 
 function selectLabeledNodes(

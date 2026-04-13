@@ -144,8 +144,6 @@ export default function App() {
           Atlas regions linked by semantic similarity, with lightweight handoff into atlas
           drill-down.
         </p>
-        <p>{graph ? `Graph kind: ${graph.graph_kind}` : "Graph kind unavailable"}</p>
-        <p>{graph ? `Edge scope: ${graph.edge_scope}` : "Edge scope unavailable"}</p>
       </section>
 
       <section className="similarity-stage-card">

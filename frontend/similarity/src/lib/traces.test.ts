@@ -52,6 +52,7 @@ describe("buildSimilarityFigure", () => {
     expect(findTextTrace(figure)).toMatchObject({
       type: "scattergl",
       mode: "text",
+      name: "labels",
       showlegend: false,
       text: ["chrome · dns management", "tiktok · live streaming"],
       customdata: ["region-research", "region-social"],
@@ -86,6 +87,32 @@ describe("buildSimilarityFigure", () => {
     expect(labelTrace?.text).toContain("chrome · dns management");
     expect(labelTrace?.x).toContain(0.32);
     expect(labelTrace?.y).toContain(0.44);
+  });
+
+  it("uses dark text only when a bright-category label is anchored on the node", () => {
+    const figure = buildSimilarityFigure(
+      {
+        ...graphFixture,
+        nodes: [
+          {
+            ...graphFixture.nodes[0],
+            label_x: graphFixture.nodes[0].x,
+            label_y: graphFixture.nodes[0].y,
+          },
+          ...graphFixture.nodes.slice(1),
+        ],
+      },
+      figureOptions("default"),
+    );
+
+    expect(findTextTrace(figure)).toMatchObject({
+      textfont: {
+        color: [
+          "rgba(245,248,250,0.96)",
+          "rgba(7,18,26,0.96)",
+        ],
+      },
+    });
   });
 
   it("shows only top labels by priority in default mode", () => {
@@ -396,17 +423,25 @@ describe("buildSimilarityFigure", () => {
     });
     expect(findTrace(figure, "research")).toMatchObject({
       marker: {
-        opacity: [0.92],
+        opacity: [0.94],
       },
     });
     expect(findTrace(figure, "utility")).toMatchObject({
       marker: {
-        opacity: [0.92],
+        opacity: [0.94],
       },
     });
     expect(findTrace(figure, "workflow")).toMatchObject({
       marker: {
-        opacity: [0.22],
+        opacity: [0.12],
+      },
+    });
+    expect(findTextTrace(figure)).toMatchObject({
+      textfont: {
+        color: [
+          "rgba(210,220,230,0.42)",
+          "rgba(245,248,250,0.96)",
+        ],
       },
     });
   });
@@ -620,13 +655,7 @@ function findTrace(
 }
 
 function findTextTrace(figure: ReturnType<typeof buildSimilarityFigure>): Record<string, unknown> {
-  const trace = figure.data.find((entry) => entry.mode === "text");
-
-  if (!trace) {
-    throw new Error("Text trace not found.");
-  }
-
-  return trace;
+  return findTrace(figure, "labels");
 }
 
 function findHighlightTrace(
