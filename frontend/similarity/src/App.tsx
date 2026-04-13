@@ -116,6 +116,14 @@ export default function App() {
   }, [graph, selectedRegionKey, visibleCategories]);
 
   const selectedNode = graph?.nodes.find((node) => node.region_key === selectedRegionKey) ?? null;
+  const regionDetailsHref =
+    selectedNode === null
+      ? null
+      : buildAtlasHandoffUrl(`/atlas/regions/${encodeURIComponent(selectedNode.region_key)}`);
+  const evidenceHref =
+    selectedNode === null
+      ? null
+      : buildAtlasHandoffUrl("/atlas/evidence", { region_key: selectedNode.region_key });
 
   return (
     <main className="similarity-app-shell">
@@ -230,12 +238,11 @@ export default function App() {
                 <dd>{selectedNode.degree}</dd>
               </div>
             </dl>
-            <p>{`Degree: ${selectedNode.degree}`}</p>
             <p>{selectedNode.top_labels.slice(0, 5).join(", ")}</p>
             <p>{selectedNode.top_apps.slice(0, 3).join(", ")}</p>
             <div className="similarity-selection-card__actions">
-              <a href={`/atlas/regions/${selectedNode.region_key}`}>Region details</a>
-              <a href={`/atlas/evidence?region_key=${selectedNode.region_key}`}>Evidence</a>
+              <a href={regionDetailsHref ?? "#"}>Region details</a>
+              <a href={evidenceHref ?? "#"}>Evidence</a>
             </div>
           </aside>
         ) : null}
@@ -467,4 +474,51 @@ function isRegionVisible(
 ): boolean {
   const node = graph.nodes.find((entry) => entry.region_key === regionKey);
   return node ? visibleCategories.has(node.dominant_screen_category) : false;
+}
+
+function buildAtlasHandoffUrl(
+  path: string,
+  params: Record<string, string> = {},
+  currentPath?: string,
+): string {
+  const url = new URL(resolveAtlasHandoffPath(path, currentPath), "http://memoria.local");
+
+  for (const [key, value] of Object.entries(params)) {
+    if (value.length > 0) {
+      url.searchParams.set(key, value);
+    }
+  }
+
+  return `${url.pathname}${url.search}`;
+}
+
+function resolveAtlasHandoffPath(path: string, currentPath?: string): string {
+  const normalizedCurrentPath = normalizeCurrentPath(currentPath);
+  const atlasSuffix = path.startsWith("/atlas/") ? path.slice("/atlas/".length) : null;
+
+  if (
+    normalizedCurrentPath !== null &&
+    atlasSuffix !== null &&
+    normalizedCurrentPath.endsWith("/similarity")
+  ) {
+    const rootPath = normalizedCurrentPath.slice(0, -"/similarity".length);
+    return `${rootPath}/atlas/${atlasSuffix}`;
+  }
+
+  return path;
+}
+
+function normalizeCurrentPath(currentPath?: string): string | null {
+  const rawPath = currentPath ?? (typeof window === "undefined" ? null : window.location.pathname);
+
+  if (rawPath === null) {
+    return null;
+  }
+
+  const trimmed = rawPath.trim();
+  if (trimmed.length === 0) {
+    return null;
+  }
+
+  return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
 }

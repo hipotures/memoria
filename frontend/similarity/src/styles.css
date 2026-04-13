@@ -154,10 +154,6 @@ code {
   min-height: 48px;
 }
 
-.similarity-control--checkbox {
-  padding-right: 8px;
-}
-
 .similarity-control__label {
   color: var(--text);
   font-size: 0.94rem;
@@ -186,28 +182,9 @@ code {
 
 .similarity-control__input:focus-visible,
 .similarity-controls__submit:focus-visible,
-.similarity-control__select:focus-visible,
-.similarity-control__checkbox:focus-visible {
+.similarity-control__select:focus-visible {
   outline: 2px solid rgba(214, 173, 100, 0.72);
   outline-offset: 2px;
-}
-
-.similarity-control__checkbox-shell {
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 34px;
-  height: 34px;
-  border: 1px solid rgba(158, 193, 207, 0.16);
-  border-radius: 999px;
-  background: var(--input-bg);
-}
-
-.similarity-control__checkbox {
-  width: 16px;
-  height: 16px;
-  margin: 0;
-  accent-color: #5ed0c0;
 }
 
 .similarity-controls__submit {

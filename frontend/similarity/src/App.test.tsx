@@ -38,6 +38,7 @@ describe("App", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    window.history.replaceState({}, "", "/");
     plotlyClickHandler = null;
     plotlyLegendClickHandler = null;
     plotlyLegendDoubleClickHandler = null;
@@ -45,7 +46,7 @@ describe("App", () => {
     fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
 
-      if (url.pathname === "/similarity/graph") {
+      if (url.pathname === "/similarity/graph" || url.pathname.endsWith("/similarity/graph")) {
         return jsonResponse(buildGraphPayload());
       }
 
@@ -129,6 +130,8 @@ describe("App", () => {
   });
 
   it("shows a lightweight summary and atlas handoff when a node is selected", async () => {
+    window.history.replaceState({}, "", "/proxy-prefix/similarity");
+
     await act(async () => {
       root.render(<App />);
     });
@@ -150,11 +153,14 @@ describe("App", () => {
     await waitForText(container, "chrome · dns management");
     const selectionCard = findElementByLabel(container, "Selected similarity region");
     expect(selectionCard.textContent).toContain("region-a");
-    expect(selectionCard.textContent).toContain("Degree2");
+    expect(findDefinitionValue(selectionCard, "Degree")?.textContent).toBe("2");
     expect(selectionCard.textContent).not.toContain("region similarity");
-    expect(findLink(container, "Region details").getAttribute("href")).toBe("/atlas/regions/region-a");
+    expect(selectionCard.textContent).not.toContain("Degree: 2");
+    expect(findLink(container, "Region details").getAttribute("href")).toBe(
+      "/proxy-prefix/atlas/regions/region-a",
+    );
     expect(findLink(container, "Evidence").getAttribute("href")).toBe(
-      "/atlas/evidence?region_key=region-a",
+      "/proxy-prefix/atlas/evidence?region_key=region-a",
     );
   });
 
@@ -505,6 +511,21 @@ function findElementByLabel(container: HTMLElement, label: string): HTMLElement 
   }
 
   return element;
+}
+
+function findDefinitionValue(container: HTMLElement, term: string): HTMLElement | null {
+  const groups = Array.from(container.querySelectorAll("dl > div"));
+
+  for (const group of groups) {
+    const dt = group.querySelector("dt");
+    const dd = group.querySelector("dd");
+
+    if (dt?.textContent === term && dd instanceof HTMLElement) {
+      return dd;
+    }
+  }
+
+  return null;
 }
 
 function changeInputValue(input: HTMLInputElement, value: string): void {
