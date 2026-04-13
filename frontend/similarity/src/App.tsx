@@ -4,6 +4,7 @@ import { fetchSimilarityGraph } from "./api/client";
 import type { SimilarityGraphResponse } from "./api/contracts";
 import { resolvePlotly } from "./lib/plotly";
 import { buildSimilarityFigure } from "./lib/traces";
+import type { LabelMode } from "./lib/traces";
 
 type LoadState = "loading" | "ready" | "error";
 type GraphQuery = {
@@ -46,7 +47,7 @@ export default function App() {
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [minClusterSizeInput, setMinClusterSizeInput] = useState("1");
   const [minEdgeWeightInput, setMinEdgeWeightInput] = useState("0");
-  const [showLabels, setShowLabels] = useState(true);
+  const [labelMode, setLabelMode] = useState<LabelMode>("default");
   const [selectedRegionKey, setSelectedRegionKey] = useState<string | null>(null);
   const [visibleCategories, setVisibleCategories] = useState<Set<string> | null>(null);
 
@@ -82,7 +83,7 @@ export default function App() {
     }
 
     const figure = buildSimilarityFigure(graph, {
-      showLabels,
+      labelMode,
       selectedRegionKey,
       visibleCategories,
     });
@@ -99,7 +100,7 @@ export default function App() {
       .catch((error: unknown) => {
         applyErrorState(error);
       });
-  }, [graph, selectedRegionKey, showLabels, visibleCategories]);
+  }, [graph, labelMode, selectedRegionKey, visibleCategories]);
 
   useEffect(() => {
     if (
@@ -122,9 +123,11 @@ export default function App() {
         <p className="similarity-hero__eyebrow">Semantic atlas restart</p>
         <h1>Cluster similarity network</h1>
         <p className="similarity-hero__lede">
-          Shared topic and task signatures across screenshot clusters, rendered as a dedicated
-          Plotly overview from the <code>/similarity</code> bundle.
+          Region-to-region semantic similarity across atlas regions, with lightweight handoff into
+          atlas drill-down.
         </p>
+        <p>{graph ? `Graph kind: ${graph.graph_kind}` : "Graph kind unavailable"}</p>
+        <p>{graph ? `Edge scope: ${graph.edge_scope}` : "Edge scope unavailable"}</p>
       </section>
 
       <section className="similarity-stage-card">
@@ -167,23 +170,43 @@ export default function App() {
               }}
             />
           </label>
-          <label className="similarity-control similarity-control--checkbox">
-            <span className="similarity-control__label">Show labels</span>
-            <span className="similarity-control__checkbox-shell">
-              <input
-                className="similarity-control__checkbox"
-                type="checkbox"
-                checked={showLabels}
-                onChange={(event) => {
-                  setShowLabels(event.target.checked);
-                }}
-              />
-            </span>
+          <label className="similarity-control">
+            <span className="similarity-control__label">Label mode</span>
+            <select
+              className="similarity-control__select"
+              value={labelMode}
+              onChange={(event) => setLabelMode(event.target.value as LabelMode)}
+            >
+              <option value="none">None</option>
+              <option value="default">Default</option>
+              <option value="all">All</option>
+              <option value="selected">Selected</option>
+            </select>
           </label>
           <button className="similarity-controls__submit" type="submit">
             Apply graph filters
           </button>
         </form>
+
+        {graph ? (
+          <div className="similarity-node-picker" aria-label="Similarity regions">
+            {graph.nodes.map((node) => (
+              <button
+                key={node.region_key}
+                className="similarity-node-picker__button"
+                type="button"
+                aria-pressed={selectedRegionKey === node.region_key}
+                onClick={() => {
+                  setSelectedRegionKey((current) =>
+                    current === node.region_key ? null : node.region_key,
+                  );
+                }}
+              >
+                {node.label}
+              </button>
+            ))}
+          </div>
+        ) : null}
 
         <div className="similarity-stage-card__stage">
           <div
@@ -201,6 +224,44 @@ export default function App() {
             </p>
           ) : null}
         </div>
+
+        {selectedNode ? (
+          <aside className="similarity-selection-card" aria-label="Selected similarity region">
+            <p className="similarity-selection-card__eyebrow">
+              {graph?.graph_kind ?? "region similarity"}
+            </p>
+            <h3>{selectedNode.label}</h3>
+            <dl>
+              <div>
+                <dt>Title</dt>
+                <dd>{selectedNode.title}</dd>
+              </div>
+              <div>
+                <dt>Region key</dt>
+                <dd>{selectedNode.region_key}</dd>
+              </div>
+              <div>
+                <dt>Items</dt>
+                <dd>{selectedNode.item_count}</dd>
+              </div>
+              <div>
+                <dt>Category</dt>
+                <dd>{selectedNode.dominant_screen_category}</dd>
+              </div>
+              <div>
+                <dt>Degree</dt>
+                <dd>{selectedNode.degree}</dd>
+              </div>
+            </dl>
+            <p>{`Degree: ${selectedNode.degree}`}</p>
+            <p>{selectedNode.top_labels.slice(0, 5).join(", ")}</p>
+            <p>{selectedNode.top_apps.slice(0, 3).join(", ")}</p>
+            <div className="similarity-selection-card__actions">
+              <a href={`/atlas/regions/${selectedNode.region_key}`}>Region details</a>
+              <a href={`/atlas/evidence?region_key=${selectedNode.region_key}`}>Evidence</a>
+            </div>
+          </aside>
+        ) : null}
 
         <footer className="similarity-stage-card__footer">
           <p>

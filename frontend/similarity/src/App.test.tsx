@@ -1,10 +1,13 @@
 import { act } from "react";
+import type { ReactElement } from "react";
 import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildSimilarityRequestUrl } from "./api/client";
 import App from "./App";
+
+let activeRoot: Root | null = null;
 
 describe("App", () => {
   let container: HTMLDivElement;
@@ -38,6 +41,7 @@ describe("App", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
+    activeRoot = root;
     plotlyClickHandler = null;
     plotlyLegendClickHandler = null;
     plotlyLegendDoubleClickHandler = null;
@@ -73,6 +77,7 @@ describe("App", () => {
     act(() => {
       root.unmount();
     });
+    activeRoot = null;
     container.remove();
   });
 
@@ -82,11 +87,10 @@ describe("App", () => {
     });
 
     await waitForText(container, "Cluster similarity network");
-    await waitForText(container, "Show labels");
+    await waitForText(container, "Label mode");
 
     changeInputValue(findInput(container, "Min cluster size"), "8");
     changeInputValue(findInput(container, "Min edge weight"), "0.55");
-    clickElement(findCheckbox(container, "Show labels"));
     clickElement(findButton(container, "Apply graph filters"));
 
     await waitForRequestCount(fetchMock, 2);
@@ -95,13 +99,13 @@ describe("App", () => {
       "/similarity/graph?min_cluster_size=8&min_edge_weight=0.55",
     ]);
     expect(newPlotMock).toHaveBeenCalledOnce();
-    expect(reactMock).toHaveBeenCalled();
+    await waitForPlotUpdates(reactMock, 1);
 
     act(() => {
       plotlyClickHandler?.({
         points: [
           {
-            customdata: ["region-research", "Research cluster", 17, "research"],
+            customdata: ["region-a", "Research cluster", 17, "research"],
             data: { name: "social" },
             pointNumber: 99,
           },
@@ -127,6 +131,23 @@ describe("App", () => {
         symbol: "circle-open",
       },
     });
+  });
+
+  it("shows a lightweight summary and atlas handoff when a node is selected", async () => {
+    render(<App />);
+
+    await screen.findByText("Overview graph");
+    fireEvent.click(await screen.findByRole("button", { name: /chrome · dns management/i }));
+
+    expect(screen.getByText(/region similarity/i)).not.toBeNull();
+    expect(screen.getByText(/region-a/i)).not.toBeNull();
+    expect(screen.getByText(/degree: 2/i)).not.toBeNull();
+    expect(screen.getByRole("link", { name: /region details/i }).getAttribute("href")).toBe(
+      "/atlas/regions/region-a",
+    );
+    expect(screen.getByRole("link", { name: /evidence/i }).getAttribute("href")).toBe(
+      "/atlas/evidence?region_key=region-a",
+    );
   });
 
   it("rebuilds edges when legend toggles hide a category", async () => {
@@ -169,7 +190,7 @@ describe("App", () => {
       plotlyClickHandler?.({
         points: [
           {
-            customdata: ["region-research", "Research cluster", 17, "research"],
+            customdata: ["region-a", "Research cluster", 17, "research"],
             data: { name: "research" },
             pointNumber: 0,
           },
@@ -210,15 +231,13 @@ describe("App", () => {
 
     const controlGroups = Array.from(container.querySelectorAll(".similarity-control"));
     expect(controlGroups).toHaveLength(3);
-    expect(controlGroups.map((group) => group.querySelector(".similarity-control__label")?.textContent)).toEqual([
-      "Min cluster size",
-      "Min edge weight",
-      "Show labels",
-    ]);
+    expect(
+      controlGroups.map((group) => group.querySelector(".similarity-control__label")?.textContent),
+    ).toEqual(["Min cluster size", "Min edge weight", "Label mode"]);
 
     expect(findInput(container, "Min cluster size").classList.contains("similarity-control__input")).toBe(true);
     expect(findInput(container, "Min edge weight").classList.contains("similarity-control__input")).toBe(true);
-    expect(findCheckbox(container, "Show labels").classList.contains("similarity-control__checkbox")).toBe(true);
+    expect(findSelect(container, "Label mode").classList.contains("similarity-control__select")).toBe(true);
     expect(findButton(container, "Apply graph filters").classList.contains("similarity-controls__submit")).toBe(true);
   });
 
@@ -404,6 +423,39 @@ async function flushMicrotasks(): Promise<void> {
   });
 }
 
+function render(component: ReactElement): void {
+  if (activeRoot === null) {
+    throw new Error("No active root available for render.");
+  }
+
+  act(() => {
+    activeRoot.render(component);
+  });
+}
+
+const fireEvent = {
+  click(element: HTMLElement): void {
+    clickElement(element);
+  },
+};
+
+const screen = {
+  getByText(text: RegExp | string): HTMLElement {
+    return findText(document.body, text);
+  },
+  async findByText(text: RegExp | string): Promise<HTMLElement> {
+    await waitForTextValue(document.body, text);
+    return findText(document.body, text);
+  },
+  getByRole(role: "button" | "link", options: { name: RegExp | string }): HTMLElement {
+    return findElementByRole(document.body, role, options.name);
+  },
+  async findByRole(role: "button" | "link", options: { name: RegExp | string }): Promise<HTMLElement> {
+    await waitForRole(document.body, role, options.name);
+    return findElementByRole(document.body, role, options.name);
+  },
+};
+
 function requestPaths(fetchMock: ReturnType<typeof vi.fn>): string[] {
   return fetchMock.mock.calls.map(([input]) => {
     const url = new URL(String(input), "http://localhost");
@@ -411,12 +463,110 @@ function requestPaths(fetchMock: ReturnType<typeof vi.fn>): string[] {
   });
 }
 
+async function waitForTextValue(container: HTMLElement, text: RegExp | string): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (queryText(container, text) !== null) {
+      return;
+    }
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  throw new Error(`Timed out waiting for text: ${String(text)}`);
+}
+
+async function waitForRole(
+  container: HTMLElement,
+  role: "button" | "link",
+  name: RegExp | string,
+): Promise<void> {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (queryElementByRole(container, role, name) !== null) {
+      return;
+    }
+
+    await act(async () => {
+      await Promise.resolve();
+    });
+  }
+
+  throw new Error(`Timed out waiting for role ${role} with name ${String(name)}`);
+}
+
+function findText(container: HTMLElement, text: RegExp | string): HTMLElement {
+  const element = queryText(container, text);
+  if (element === null) {
+    throw new Error(`Could not find text: ${String(text)}`);
+  }
+
+  return element;
+}
+
+function queryText(container: HTMLElement, text: RegExp | string): HTMLElement | null {
+  const elements = [container, ...Array.from(container.querySelectorAll("*"))];
+
+  for (const element of elements) {
+    const content = element.textContent?.trim();
+    if (!content) {
+      continue;
+    }
+
+    if (matchesText(content, text)) {
+      return element as HTMLElement;
+    }
+  }
+
+  return null;
+}
+
+function findElementByRole(
+  container: HTMLElement,
+  role: "button" | "link",
+  name: RegExp | string,
+): HTMLElement {
+  const element = queryElementByRole(container, role, name);
+  if (element === null) {
+    throw new Error(`Could not find role ${role} with name ${String(name)}`);
+  }
+
+  return element;
+}
+
+function queryElementByRole(
+  container: HTMLElement,
+  role: "button" | "link",
+  name: RegExp | string,
+): HTMLElement | null {
+  const selector = role === "button" ? "button" : "a";
+  const candidates = Array.from(container.querySelectorAll(selector));
+
+  for (const candidate of candidates) {
+    const accessibleName = candidate.textContent?.trim() ?? "";
+    if (matchesText(accessibleName, name)) {
+      return candidate as HTMLElement;
+    }
+  }
+
+  return null;
+}
+
+function matchesText(content: string, text: RegExp | string): boolean {
+  if (typeof text === "string") {
+    return content.includes(text);
+  }
+
+  text.lastIndex = 0;
+  return text.test(content);
+}
+
 function findInput(container: HTMLElement, labelText: string): HTMLInputElement {
   return findControlByLabel(container, labelText, "input:not([type='checkbox'])") as HTMLInputElement;
 }
 
-function findCheckbox(container: HTMLElement, labelText: string): HTMLInputElement {
-  return findControlByLabel(container, labelText, "input[type='checkbox']") as HTMLInputElement;
+function findSelect(container: HTMLElement, labelText: string): HTMLSelectElement {
+  return findControlByLabel(container, labelText, "select") as HTMLSelectElement;
 }
 
 function findControlByLabel(
@@ -523,40 +673,53 @@ function buildGraphPayload(options?: {
     },
     nodes: [
       {
-        region_key: "region-social",
+        region_key: "region-b",
         title: "Social cluster",
+        label: "telegram · chat reply",
+        canonical_title: "Social cluster",
+        duplicate_title_count: 1,
         x: 0.12,
         y: 0.44,
+        label_x: 0.18,
+        label_y: 0.48,
         size: 28,
         item_count: 21,
+        degree: 1,
+        label_priority: 40,
         dominant_screen_category: "social",
         top_labels: ["telegram", "chat"],
         top_apps: ["Telegram"],
         top_entities: ["Alice"],
-        is_labeled: true,
         representative_source_item_ids: [11, 14],
       },
       {
-        region_key: "region-research",
+        region_key: "region-a",
         title: "Research cluster",
+        label: "chrome · dns management",
+        canonical_title: "Research cluster",
+        duplicate_title_count: 1,
         x: 0.68,
         y: 0.23,
+        label_x: 0.74,
+        label_y: 0.18,
         size: 22,
         item_count: 17,
+        degree: 2,
+        label_priority: 90,
         dominant_screen_category: "research",
-        top_labels: ["browser", "notes"],
+        top_labels: ["dns management", "workspace docs"],
         top_apps: ["Chrome"],
         top_entities: ["Docs"],
-        is_labeled: false,
         representative_source_item_ids: [21],
       },
     ],
     edges: [
       {
-        source_region_key: "region-social",
-        target_region_key: "region-research",
+        source_region_key: "region-b",
+        target_region_key: "region-a",
         weight: 0.61,
         support: 9,
+        edge_type: "semantic_similarity",
         reason: "shared_topic_task_signature",
       },
     ],
@@ -583,5 +746,8 @@ function buildGraphPayload(options?: {
       has_knowledge: null,
       search_query: null,
     },
+    graph_kind: "region similarity",
+    edge_scope: "atlas regions",
+    default_label_limit: 1,
   };
 }

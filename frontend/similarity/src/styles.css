@@ -175,11 +175,42 @@ code {
   text-align: center;
 }
 
+.similarity-control__select {
+  min-width: 9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(141, 166, 184, 0.28);
+  background: rgba(30, 52, 68, 0.84);
+  color: rgba(244, 247, 250, 0.94);
+  padding: 0.55rem 0.85rem;
+}
+
 .similarity-control__input:focus-visible,
 .similarity-controls__submit:focus-visible,
+.similarity-control__select:focus-visible,
 .similarity-control__checkbox:focus-visible {
   outline: 2px solid rgba(214, 173, 100, 0.72);
   outline-offset: 2px;
+}
+
+.similarity-node-picker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin-top: 16px;
+}
+
+.similarity-node-picker__button {
+  border: 1px solid rgba(113, 156, 178, 0.22);
+  border-radius: 999px;
+  padding: 0.55rem 0.9rem;
+  background: rgba(10, 27, 37, 0.92);
+  color: rgba(244, 247, 250, 0.94);
+  cursor: pointer;
+}
+
+.similarity-node-picker__button[aria-pressed="true"] {
+  border-color: rgba(214, 173, 100, 0.48);
+  background: rgba(34, 52, 63, 0.92);
 }
 
 .similarity-control__checkbox-shell {
@@ -260,6 +291,77 @@ code {
   flex-wrap: wrap;
 }
 
+.similarity-selection-card {
+  margin-top: 1rem;
+  padding: 1rem 1.1rem;
+  border-radius: 18px;
+  background: rgba(11, 36, 50, 0.86);
+  border: 1px solid rgba(113, 156, 178, 0.22);
+}
+
+.similarity-selection-card__eyebrow {
+  margin: 0;
+  color: var(--accent);
+  text-transform: uppercase;
+  letter-spacing: 0.12em;
+  font-size: 0.74rem;
+}
+
+.similarity-selection-card h3 {
+  margin: 0.5rem 0 0;
+  font-family: "Iowan Old Style", "Palatino Linotype", serif;
+  font-size: 1.5rem;
+}
+
+.similarity-selection-card dl {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.8rem;
+  margin: 1rem 0 0;
+}
+
+.similarity-selection-card dl div {
+  padding: 0.7rem 0.8rem;
+  border-radius: 14px;
+  background: rgba(7, 23, 33, 0.52);
+}
+
+.similarity-selection-card dt {
+  color: var(--muted);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+}
+
+.similarity-selection-card dd {
+  margin: 0.3rem 0 0;
+  color: var(--text);
+}
+
+.similarity-selection-card > p {
+  margin: 0.9rem 0 0;
+  color: var(--muted);
+}
+
+.similarity-selection-card__actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-top: 1rem;
+}
+
+.similarity-selection-card__actions a {
+  display: inline-flex;
+  align-items: center;
+  min-height: 40px;
+  padding: 0.55rem 0.9rem;
+  border-radius: 999px;
+  border: 1px solid rgba(214, 173, 100, 0.24);
+  background: rgba(18, 38, 50, 0.88);
+  color: var(--text);
+  text-decoration: none;
+}
+
 @media (max-width: 720px) {
   .similarity-app-shell {
     width: min(100%, calc(100% - 20px));
@@ -283,6 +385,12 @@ code {
   .similarity-controls__submit {
     width: 100%;
     justify-content: space-between;
+  }
+
+  .similarity-node-picker__button,
+  .similarity-selection-card__actions a {
+    width: 100%;
+    justify-content: center;
   }
 
   .similarity-stage-card__stage {
