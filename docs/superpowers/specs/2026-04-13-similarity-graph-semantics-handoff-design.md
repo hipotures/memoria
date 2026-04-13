@@ -303,7 +303,7 @@ Rules:
 
 Fallback order:
 
-1. `"{title} · {top_app}"`
+1. `"{title} · {top_app}"` only when `top_app` exists and is non-empty
 2. `"{title} · {item_count}"`
 3. `"{title} · {region_key_suffix}"`
 
@@ -393,6 +393,9 @@ Required values for this iteration:
 - `observed_from`
 - `observed_to`
 - `search_query`
+
+`filters` represents effective filter values in the final response.
+For inactive inherited filters, values should round-trip according to the existing API contract as `null` or the equivalent inactive representation already used by the response schema.
 
 `label_mode` is frontend state and does not need to round-trip through backend.
 
@@ -546,8 +549,9 @@ No scope growth beyond this.
 7. `duplicate_title_count` is computed from final returned nodes after filters.
 8. Default overview shows only top labels by backend `label_priority`.
 9. `top_labels`, `top_apps`, and `top_entities` remain deterministic across reloads.
-10. Clicking a node selects it, highlights its neighborhood, shows a short summary, and provides working links to `/atlas/regions/{region_key}` and `/atlas/evidence?region_key=...`.
-11. No migration is introduced for this iteration.
+10. Response explicitly reports `graph_kind = "region_similarity"` and `edge_scope = "atlas_snapshot"`.
+11. Clicking a node selects it, highlights its neighborhood, shows a short summary, and provides working links to `/atlas/regions/{region_key}` and `/atlas/evidence?region_key=...`.
+12. No migration is introduced for this iteration.
 
 ## Definition Of Done
 
