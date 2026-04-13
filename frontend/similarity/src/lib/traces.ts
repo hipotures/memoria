@@ -14,8 +14,10 @@ export type SimilarityFigure = {
   config: FigureConfig;
 };
 
+export type LabelMode = "none" | "default" | "all" | "selected";
+
 export type SimilarityFigureOptions = {
-  showLabels: boolean;
+  labelMode: LabelMode;
   selectedRegionKey: string | null;
   visibleCategories: Set<string> | null;
 };
@@ -37,6 +39,7 @@ export function buildSimilarityFigure(
     options.visibleCategories,
     selectedNode?.region_key ?? null,
   );
+  const defaultLabelLimit = graph.default_label_limit ?? 20;
 
   const edgeTrace = {
     type: "scattergl",
@@ -116,18 +119,23 @@ export function buildSimilarityFigure(
           },
         };
 
-  const labeledNodes = selectLabeledNodes(visibleNodes, options, selectedNode);
+  const labeledNodes = selectLabeledNodes(
+    visibleNodes,
+    options,
+    selectedNode,
+    defaultLabelLimit,
+  );
   const labelTrace = {
     type: "scattergl",
     mode: "text",
     showlegend: false,
     hoverinfo: "skip",
-    text: labeledNodes.map((node) => node.title),
-    x: labeledNodes.map((node) => node.x),
-    y: labeledNodes.map((node) => node.y),
-    textposition: "top center",
+    text: labeledNodes.map((node) => node.label),
+    x: labeledNodes.map((node) => node.label_x),
+    y: labeledNodes.map((node) => node.label_y),
+    textposition: "middle center",
     textfont: {
-      color: "rgba(235,240,245,0.85)",
+      color: "rgba(235,240,245,0.92)",
       size: 11,
     },
   };
@@ -307,16 +315,27 @@ function selectLabeledNodes(
   nodes: SimilarityGraphNode[],
   options: SimilarityFigureOptions,
   selectedNode: SimilarityGraphNode | null,
+  defaultLabelLimit: number,
 ): SimilarityGraphNode[] {
-  const labeledNodes = nodes.filter((node) => {
-    if (selectedNode !== null && node.region_key === selectedNode.region_key) {
-      return true;
-    }
+  if (options.labelMode === "none") {
+    return [];
+  }
 
-    return options.showLabels && node.is_labeled;
-  });
+  if (options.labelMode === "selected") {
+    return selectedNode ? [selectedNode] : [];
+  }
 
-  return labeledNodes;
+  if (options.labelMode === "all") {
+    return nodes;
+  }
+
+  return [...nodes]
+    .sort(
+      (left, right) =>
+        right.label_priority - left.label_priority ||
+        left.label.localeCompare(right.label),
+    )
+    .slice(0, defaultLabelLimit);
 }
 
 function joinList(values: string[]): string {

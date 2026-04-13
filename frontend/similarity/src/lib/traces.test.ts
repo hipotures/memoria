@@ -4,12 +4,8 @@ import type { SimilarityGraphResponse } from "../api/contracts";
 import { buildSimilarityFigure } from "./traces";
 
 describe("buildSimilarityFigure", () => {
-  it("builds one edge trace, one node trace per category, and a sparse label trace", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: true,
-      selectedRegionKey: null,
-      visibleCategories: null,
-    });
+  it("builds one edge trace, one node trace per category, and a label trace", () => {
+    const figure = buildSimilarityFigure(graphFixture, figureOptions("default"));
 
     expect(figure.data[0]).toMatchObject({
       type: "scattergl",
@@ -22,7 +18,9 @@ describe("buildSimilarityFigure", () => {
       type: "scattergl",
       mode: "markers",
       name: "social",
-      customdata: [["region-social", "Social cluster", 21, "social", "telegram, chat", "Telegram"]],
+      customdata: [
+        ["region-social", "Social cluster", 21, "social", "live streaming, creator tools", "TikTok"],
+      ],
       marker: {
         color: "#00F5D4",
       },
@@ -47,7 +45,7 @@ describe("buildSimilarityFigure", () => {
       type: "scattergl",
       mode: "text",
       showlegend: false,
-      text: ["Social cluster", "Utility cluster"],
+      text: ["chrome · dns management", "tiktok · live streaming"],
     });
 
     expect(figure.layout).toMatchObject({
@@ -69,26 +67,30 @@ describe("buildSimilarityFigure", () => {
     });
   });
 
-  it("includes the selected region in labels even when it is not otherwise labeled", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: true,
-      selectedRegionKey: "region-research",
-      visibleCategories: null,
-    });
+  it("uses backend label anchors instead of node centers", () => {
+    const figure = buildSimilarityFigure(graphFixture, figureOptions("default"));
 
     const labelTrace = findTextTrace(figure);
-    expect(labelTrace).toMatchObject({
-      mode: "text",
-      text: ["Social cluster", "Research cluster", "Utility cluster"],
-    });
+    expect(labelTrace?.text).toContain("chrome · dns management");
+    expect(labelTrace?.x).toContain(0.32);
+    expect(labelTrace?.y).toContain(0.44);
+  });
+
+  it("shows only top labels by priority in default mode", () => {
+    const figure = buildSimilarityFigure(graphFixture, figureOptions("default"));
+
+    const labelTrace = findTextTrace(figure);
+    expect(labelTrace?.text).toEqual([
+      "chrome · dns management",
+      "tiktok · live streaming",
+    ]);
   });
 
   it("adds a dedicated highlight marker trace for the selected region", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: true,
-      selectedRegionKey: "region-research",
-      visibleCategories: null,
-    });
+    const figure = buildSimilarityFigure(
+      graphFixture,
+      figureOptions("default", "region-research"),
+    );
 
     expect(findHighlightTrace(figure)).toMatchObject({
       type: "scattergl",
@@ -107,27 +109,22 @@ describe("buildSimilarityFigure", () => {
     });
   });
 
-  it("keeps the selected region label visible when showLabels is false", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: false,
-      selectedRegionKey: "region-research",
-      visibleCategories: null,
-    });
+  it("shows only the selected region label in selected mode", () => {
+    const figure = buildSimilarityFigure(
+      graphFixture,
+      figureOptions("selected", "region-research"),
+    );
 
     expect(findTextTrace(figure)).toMatchObject({
       mode: "text",
-      text: ["Research cluster"],
-      x: [0.68],
-      y: [0.23],
+      text: ["chrome · dns management"],
+      x: [0.32],
+      y: [0.44],
     });
   });
 
-  it("omits labels when showLabels is false and nothing is selected", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: false,
-      selectedRegionKey: null,
-      visibleCategories: null,
-    });
+  it("omits labels in none mode even when a region is selected", () => {
+    const figure = buildSimilarityFigure(graphFixture, figureOptions("none", "region-research"));
 
     expect(findTextTrace(figure)).toMatchObject({
       mode: "text",
@@ -138,11 +135,7 @@ describe("buildSimilarityFigure", () => {
   });
 
   it("formats hover content without exposing region keys or top entities", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: true,
-      selectedRegionKey: null,
-      visibleCategories: null,
-    });
+    const figure = buildSimilarityFigure(graphFixture, figureOptions("default"));
 
     expect(findTrace(figure, "social")).toMatchObject({
       hovertemplate:
@@ -155,14 +148,19 @@ describe("buildSimilarityFigure", () => {
   });
 
   it("emits region keys in per-point customdata for stable click selection", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: true,
-      selectedRegionKey: null,
-      visibleCategories: null,
-    });
+    const figure = buildSimilarityFigure(graphFixture, figureOptions("default"));
 
     expect(findTrace(figure, "research")).toMatchObject({
-      customdata: [["region-research", "Research cluster", 17, "research", "browser, notes", "Chrome"]],
+      customdata: [
+        [
+          "region-research",
+          "Research cluster",
+          17,
+          "research",
+          "dns management, workspace docs",
+          "Chrome",
+        ],
+      ],
     });
   });
 
@@ -184,11 +182,7 @@ describe("buildSimilarityFigure", () => {
           },
         ],
       },
-      {
-        showLabels: true,
-        selectedRegionKey: null,
-        visibleCategories: null,
-      },
+      figureOptions("default"),
     );
 
     expect(findTrace(figure, "social")).toMatchObject({
@@ -200,11 +194,10 @@ describe("buildSimilarityFigure", () => {
   });
 
   it("filters nodes, edges, and labels to the currently visible legend categories", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: true,
-      selectedRegionKey: null,
-      visibleCategories: new Set(["social", "utility"]),
-    });
+    const figure = buildSimilarityFigure(
+      graphFixture,
+      figureOptions("default", null, new Set(["social", "utility"])),
+    );
 
     expect(findTrace(figure, "social")).toMatchObject({
       x: [0.12],
@@ -226,16 +219,15 @@ describe("buildSimilarityFigure", () => {
       y: [0.44, -0.2, null],
     });
     expect(findTextTrace(figure)).toMatchObject({
-      text: ["Social cluster", "Utility cluster"],
+      text: ["tiktok · live streaming", "settings · battery saver"],
     });
   });
 
   it("drops highlight and selected-only labels when the selected category is hidden", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: false,
-      selectedRegionKey: "region-research",
-      visibleCategories: new Set(["social", "utility"]),
-    });
+    const figure = buildSimilarityFigure(
+      graphFixture,
+      figureOptions("selected", "region-research", new Set(["social", "utility"])),
+    );
 
     expect(() => findHighlightTrace(figure)).toThrow("Trace not found: selected-highlight");
     expect(findTextTrace(figure)).toMatchObject({
@@ -246,11 +238,10 @@ describe("buildSimilarityFigure", () => {
   });
 
   it("keeps only ego-network edges for the selected region", () => {
-    const figure = buildSimilarityFigure(graphFixture, {
-      showLabels: true,
-      selectedRegionKey: "region-social",
-      visibleCategories: new Set(["social", "research", "utility"]),
-    });
+    const figure = buildSimilarityFigure(
+      graphFixture,
+      figureOptions("default", "region-social", new Set(["social", "research", "utility"])),
+    );
 
     expect(figure.data[0]).toMatchObject({
       x: [0.12, 0.68, null, 0.12, -0.3, null],
@@ -259,7 +250,7 @@ describe("buildSimilarityFigure", () => {
   });
 });
 
-const graphFixture: SimilarityGraphResponse = {
+const graphFixture = {
   run: {
     atlas_run_id: 7,
     atlas_key: "screenshots_atlas_v1",
@@ -270,13 +261,20 @@ const graphFixture: SimilarityGraphResponse = {
     {
       region_key: "region-social",
       title: "Social cluster",
+      label: "tiktok · live streaming",
+      canonical_title: "Social cluster",
+      duplicate_title_count: 1,
       x: 0.12,
       y: 0.44,
+      label_x: 0.32,
+      label_y: 0.44,
       size: 28,
       item_count: 21,
+      degree: 2,
+      label_priority: 70,
       dominant_screen_category: "social",
-      top_labels: ["telegram", "chat"],
-      top_apps: ["Telegram"],
+      top_labels: ["live streaming", "creator tools"],
+      top_apps: ["TikTok"],
       top_entities: ["Alice"],
       is_labeled: true,
       representative_source_item_ids: [11, 14],
@@ -284,12 +282,19 @@ const graphFixture: SimilarityGraphResponse = {
     {
       region_key: "region-research",
       title: "Research cluster",
+      label: "chrome · dns management",
+      canonical_title: "Research cluster",
+      duplicate_title_count: 1,
       x: 0.68,
       y: 0.23,
+      label_x: 0.32,
+      label_y: 0.44,
       size: 22,
       item_count: 17,
+      degree: 1,
+      label_priority: 90,
       dominant_screen_category: "research",
-      top_labels: ["browser", "notes"],
+      top_labels: ["dns management", "workspace docs"],
       top_apps: ["Chrome"],
       top_entities: ["Docs"],
       is_labeled: false,
@@ -298,10 +303,17 @@ const graphFixture: SimilarityGraphResponse = {
     {
       region_key: "region-utility",
       title: "Utility cluster",
+      label: "settings · battery saver",
+      canonical_title: "Utility cluster",
+      duplicate_title_count: 1,
       x: -0.3,
       y: -0.2,
+      label_x: -0.22,
+      label_y: -0.26,
       size: 12,
       item_count: 6,
+      degree: 1,
+      label_priority: 10,
       dominant_screen_category: "utility",
       top_labels: ["battery"],
       top_apps: ["System UI"],
@@ -352,7 +364,22 @@ const graphFixture: SimilarityGraphResponse = {
     has_knowledge: null,
     search_query: null,
   },
-};
+  graph_kind: "semantic_regions",
+  edge_scope: "all",
+  default_label_limit: 2,
+} as SimilarityGraphResponse;
+
+function figureOptions(
+  labelMode: "none" | "default" | "all" | "selected",
+  selectedRegionKey: string | null = null,
+  visibleCategories: Set<string> | null = null,
+): Parameters<typeof buildSimilarityFigure>[1] {
+  return {
+    labelMode,
+    selectedRegionKey,
+    visibleCategories,
+  };
+}
 
 function findTrace(
   figure: ReturnType<typeof buildSimilarityFigure>,

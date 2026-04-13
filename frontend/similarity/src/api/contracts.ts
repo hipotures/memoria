@@ -22,15 +22,21 @@ export type SimilarityGraphRun = {
 export type SimilarityGraphNode = {
   region_key: string;
   title: string;
+  label: string;
+  canonical_title: string;
+  duplicate_title_count: number;
   x: number;
   y: number;
+  label_x: number;
+  label_y: number;
   size: number;
   item_count: number;
+  degree: number;
+  label_priority: number;
   dominant_screen_category: string;
   top_labels: string[];
   top_apps: string[];
   top_entities: string[];
-  is_labeled: boolean;
   representative_source_item_ids: number[];
 };
 
@@ -54,4 +60,7 @@ export type SimilarityGraphResponse = {
   edges: SimilarityGraphEdge[];
   legend: SimilarityGraphLegendEntry[];
   filters: SimilarityGraphFilters;
+  graph_kind: string;
+  edge_scope: string;
+  default_label_limit?: number | null;
 };
