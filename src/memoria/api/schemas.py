@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic import Field
 
 
 class IngestScreenshotRequest(BaseModel):
@@ -422,7 +423,7 @@ class AtlasOverviewResponse(BaseModel):
     atlas_run: AtlasRunResponse | None
     regions: list[AtlasRegionResponse]
     edges: list[AtlasEdgeResponse]
-    points: list[AtlasOverviewPointResponse]
+    points: list[AtlasOverviewPointResponse] = Field(default_factory=list)
     active_filters: AtlasFiltersResponse
 
 
