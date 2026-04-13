@@ -21,7 +21,6 @@ from memoria.atlas.contracts import AtlasCandidateItem
 from memoria.atlas.contracts import BridgeClassification
 from memoria.atlas.contracts import PriorRegionIdentity
 from memoria.domain.models import AssetInterpretation
-from memoria.domain.models import Embedding
 from memoria.domain.models import AtlasEdge
 from memoria.domain.models import AtlasItem
 from memoria.domain.models import AtlasRegion
@@ -34,43 +33,18 @@ from memoria.domain.models import SemanticCluster
 from memoria.domain.models import SemanticMapPoint
 from memoria.domain.models import SemanticMapRun
 from memoria.domain.models import SourceItem
-from memoria.search.embeddings import embed_text
 
 ATLAS_KEY = "screenshots_atlas_v1"
 ATLAS_EMBEDDING_TYPE = "screenshot_semantic_text"
-ATLAS_CLUSTERING_METHOD = "embedding-macroregions-v2"
+ATLAS_CLUSTERING_METHOD = "semantic-map-plus-subregions-v1"
 ATLAS_LAYOUT_VERSION = "atlas-world-v1"
 ATLAS_RANDOM_SEED = 42
 REGION_SHAPE_PADDING = 42.0
-MIN_WORLD_REGION_PADDING = 0.012
-MAX_WORLD_REGION_PADDING = 0.12
-WORLD_REGION_PADDING_RATIO = 0.22
 BRIDGE_MARGIN_THRESHOLD = 0.12
 BRIDGE_SECONDARY_DISTANCE_THRESHOLD = 1.0
 REGION_IDENTITY_OVERLAP_THRESHOLD = 0.6
 REGION_IDENTITY_CENTROID_THRESHOLD = 0.2
 SEMANTIC_EDGE_EXTRA_BUDGET_DIVISOR = 3
-MACROREGION_THRESHOLD_CANDIDATES = (
-    0.92,
-    0.88,
-    0.84,
-    0.8,
-    0.76,
-    0.72,
-    0.68,
-    0.64,
-    0.6,
-    0.56,
-    0.52,
-    0.48,
-    0.44,
-    0.4,
-    0.36,
-    0.32,
-    0.28,
-    0.24,
-    0.2,
-)
 _GENERIC_REGION_LABELS = {
     "calendar",
     "chrome",
@@ -115,22 +89,6 @@ class _SemanticRegionSource:
     time_start: datetime | None
     time_end: datetime | None
     items: list[_AtlasPoint]
-    centroid_vector: list[float] | None = None
-
-
-@dataclass(slots=True)
-class _ProjectionBasis:
-    origin: list[float]
-    axis_x: list[float]
-    axis_y: list[float]
-
-
-@dataclass(slots=True)
-class _MacroRegionGroup:
-    region_sources: list[_SemanticRegionSource]
-    vector_sum: list[float]
-    weight_total: float
-    centroid_vector: list[float]
 
 
 @dataclass(slots=True)
@@ -353,9 +311,8 @@ def rebuild_screenshot_atlas(session: Session, *, force: bool = False) -> dict[s
         clustering_params_json=json.dumps(
             {
                 "bridge_margin": BRIDGE_MARGIN_THRESHOLD,
-                "macroregion_thresholds": list(MACROREGION_THRESHOLD_CANDIDATES),
-                "subregion_source": "semantic_clusters",
-                "topology": "embedding-macroregions",
+                "subregion_cap": 8,
+                "topology": "semantic-map-derived",
             },
             sort_keys=True,
         ),
@@ -402,35 +359,6 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
         .order_by(SemanticMapPoint.id.asc())
     ).all()
     source_item_ids = [point.source_item_id for point in map_points]
-    embedding_rows = session.scalars(
-        select(Embedding)
-        .where(
-            Embedding.embedding_type == ATLAS_EMBEDDING_TYPE,
-            Embedding.source_item_id.in_(source_item_ids),
-        )
-        .order_by(Embedding.id.asc())
-    ).all()
-    embedding_by_source_item_id = {
-        int(embedding_row.source_item_id): embedding_row
-        for embedding_row in embedding_rows
-        if embedding_row.source_item_id is not None
-    }
-    interpretations_by_source_item_id = {
-        row.source_item_id: row
-        for row in session.scalars(
-            select(AssetInterpretation)
-            .where(AssetInterpretation.source_item_id.in_(source_item_ids))
-            .order_by(AssetInterpretation.source_item_id.asc())
-        ).all()
-    }
-    source_items_by_id = {
-        row.id: row
-        for row in session.scalars(
-            select(SourceItem)
-            .where(SourceItem.id.in_(source_item_ids))
-            .order_by(SourceItem.id.asc())
-        ).all()
-    }
     object_refs_by_source_item_id = _load_object_refs_by_source_item_id(
         session,
         source_item_ids=source_item_ids,
@@ -439,27 +367,22 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
         session,
         source_item_ids=source_item_ids,
     )
+    signal_scale = _signal_scale(clusters=clusters, points=map_points)
 
     points_by_id: dict[int, _AtlasPoint] = {}
-    grouped_source_item_ids: dict[str, list[int]] = defaultdict(list)
+    grouped_points: dict[str, list[_AtlasPoint]] = defaultdict(list)
     for point in map_points:
-        interpretation = interpretations_by_source_item_id.get(point.source_item_id)
-        source_item = source_items_by_id.get(point.source_item_id)
-        embedding_row = embedding_by_source_item_id.get(point.source_item_id)
-        if (
-            interpretation is None
-            or source_item is None
-            or embedding_row is None
-            or point.cluster_key is None
-        ):
+        interpretation = session.get(AssetInterpretation, point.source_item_id)
+        source_item = session.get(SourceItem, point.source_item_id)
+        if interpretation is None or source_item is None or point.cluster_key is None:
             continue
 
         atlas_point = _AtlasPoint(
             source_item_id=point.source_item_id,
             cluster_key=point.cluster_key,
-            x=0.0,
-            y=0.0,
-            vector=embed_text(embedding_row.content_text),
+            x=point.x,
+            y=point.y,
+            vector=_signal_vector(x=point.x, y=point.y, scale=signal_scale),
             semantic_summary=interpretation.semantic_summary,
             app_hint=interpretation.app_hint,
             connector_instance_id=source_item.connector_instance_id,
@@ -472,43 +395,32 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
             cluster_hints=json.loads(interpretation.cluster_hints_json or "[]"),
         )
         points_by_id[point.source_item_id] = atlas_point
-        grouped_source_item_ids[atlas_point.cluster_key].append(atlas_point.source_item_id)
-
-    basis = _build_projection_basis([point.vector for point in points_by_id.values()])
-    for atlas_point in points_by_id.values():
-        atlas_point.x, atlas_point.y = _project_vector_to_world(atlas_point.vector, basis)
+        grouped_points[atlas_point.cluster_key].append(atlas_point)
 
     regions: list[_SemanticRegionSource] = []
     for cluster in clusters:
-        cluster_points = [
-            points_by_id[source_item_id]
-            for source_item_id in grouped_source_item_ids.get(cluster.cluster_key, [])
-            if source_item_id in points_by_id
-        ]
-        if not cluster_points:
-            continue
-        summary = _summarize_points(cluster_points, fallback_title=cluster.title or cluster.cluster_key)
+        summary = json.loads(cluster.summary_json or "{}")
         regions.append(
             _SemanticRegionSource(
                 cluster_key=cluster.cluster_key,
-                title=str(summary["title"] or cluster.title or cluster.cluster_key),
-                x=round(sum(point.x for point in cluster_points) / len(cluster_points), 6),
-                y=round(sum(point.y for point in cluster_points) / len(cluster_points), 6),
-                top_labels=list(summary["top_labels"]),
-                top_apps=list(summary["top_apps"]),
-                time_start=summary["time_start"],
-                time_end=summary["time_end"],
-                items=cluster_points,
-                centroid_vector=_normalized_mean_vector([point.vector for point in cluster_points]),
+                title=str(summary.get("title") or cluster.title or cluster.cluster_key),
+                x=cluster.centroid_x,
+                y=cluster.centroid_y,
+                top_labels=list(summary.get("top_labels") or []),
+                top_apps=list(summary.get("dominant_apps") or []),
+                time_start=_parse_datetime(summary.get("time_start")),
+                time_end=_parse_datetime(summary.get("time_end")),
+                items=grouped_points.get(cluster.cluster_key, []),
             )
         )
 
+    persisted_regions = [region for region in regions if region.items]
     source_snapshot_id, corpus_hash = _atlas_input_snapshot_identity(
         map_run_id=map_run.id,
         embedding_type=embedding_type,
         embedding_model=embedding_model,
         embedding_version=embedding_version,
-        regions=regions,
+        regions=persisted_regions,
         points_by_id=points_by_id,
     )
 
@@ -519,7 +431,7 @@ def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | N
         embedding_type=embedding_type,
         embedding_model=embedding_model,
         embedding_version=embedding_version,
-        regions=regions,
+        regions=persisted_regions,
         points_by_id=points_by_id,
     )
 
@@ -552,7 +464,7 @@ def _load_prior_region_identities(
     identities: list[PriorRegionIdentity] = []
     for region in prior_regions:
         source_item_ids = source_ids_by_region_key.get(region.region_key, set())
-        centroid = _normalized_mean_vector(
+        centroid = _mean_vector(
             [points_by_id[source_item_id].vector for source_item_id in sorted(source_item_ids) if source_item_id in points_by_id]
         )
         if not centroid:
@@ -575,21 +487,12 @@ def _build_top_regions(
     latest_map_run: _LatestSemanticMapRun,
     prior_region_identities: list[PriorRegionIdentity],
 ) -> list[_AtlasRegionDraft]:
-    macroregion_groups = _cluster_atomic_regions_into_macroregions(latest_map_run.regions)
     atlas_center = _compute_atlas_center(latest_map_run.regions)
     top_regions: list[_AtlasRegionDraft] = []
-    for macro_index, group in enumerate(macroregion_groups, start=1):
-        group_items = [
-            item
-            for region_source in group.region_sources
-            for item in region_source.items
-        ]
-        current_source_item_ids = {item.source_item_id for item in group_items}
-        centroid_vector = group.centroid_vector
-        top_summary = _summarize_points(
-            group_items,
-            fallback_title=group.region_sources[0].title,
-        )
+    for region_source in latest_map_run.regions:
+        current_source_item_ids = {item.source_item_id for item in region_source.items}
+        centroid_vector = _mean_vector([item.vector for item in region_source.items])
+        top_summary = _summarize_points(region_source.items, fallback_title=region_source.title)
         region_key = match_region_identity(
             prior_regions=prior_region_identities,
             source_item_ids=current_source_item_ids,
@@ -597,20 +500,18 @@ def _build_top_regions(
             label_tokens=_tokenize_strings([top_summary["title"], *top_summary["top_labels"]]),
         )
         if region_key is None:
-            region_key = f"region-macro-{macro_index:03d}"
+            region_key = f"region-{region_source.cluster_key}"
 
-        representative_rank_by_source_item_id = _representative_rank_by_source_item_id(group_items)
+        representative_rank_by_source_item_id = _representative_rank_by_source_item_id(region_source.items)
         subregions, subregion_key_by_source_item_id = _build_subregions(
             parent_region_key=region_key,
-            region_sources=group.region_sources,
+            items=region_source.items,
             atlas_center=atlas_center,
         )
-        region_x = round(sum(item.x for item in group_items) / len(group_items), 6)
-        region_y = round(sum(item.y for item in group_items) / len(group_items), 6)
-        region_shape = _build_region_shape(group_items)
+        region_shape = _build_region_shape(region_source.items)
         label_x, label_y = _compute_label_anchor(
-            region_x=region_x,
-            region_y=region_y,
+            region_x=region_source.x,
+            region_y=region_source.y,
             region_shape=region_shape,
             atlas_center=atlas_center,
         )
@@ -621,12 +522,12 @@ def _build_top_regions(
                 parent_region_key=None,
                 level=0,
                 title=top_summary["title"],
-                x=region_x,
-                y=region_y,
+                x=region_source.x,
+                y=region_source.y,
                 label_x=label_x,
                 label_y=label_y,
                 region_shape=region_shape,
-                item_count=len(group_items),
+                item_count=len(region_source.items),
                 top_labels=top_summary["top_labels"],
                 top_apps=top_summary["top_apps"],
                 top_people=top_summary["top_people"],
@@ -635,9 +536,9 @@ def _build_top_regions(
                 time_end=top_summary["time_end"],
                 representatives=_representatives_payload(representative_rank_by_source_item_id),
                 bridge_neighbors=[],
-                cohesion_score=_cohesion_score(group_items, centroid_vector),
+                cohesion_score=_cohesion_score(region_source.items, centroid_vector),
                 centroid_vector=centroid_vector,
-                items=group_items,
+                items=region_source.items,
                 representative_rank_by_source_item_id=representative_rank_by_source_item_id,
                 subregion_key_by_source_item_id=subregion_key_by_source_item_id,
                 subregions=subregions,
@@ -649,38 +550,48 @@ def _build_top_regions(
 def _build_subregions(
     *,
     parent_region_key: str,
-    region_sources: list[_SemanticRegionSource],
+    items: list[_AtlasPoint],
     atlas_center: tuple[float, float],
 ) -> tuple[list[_AtlasRegionDraft], dict[int, str]]:
-    if not region_sources:
+    subregion_count = min(derive_subregion_count(len(items)), len(items))
+    if subregion_count <= 0:
         return [], {}
+
+    center_x = sum(item.x for item in items) / len(items)
+    center_y = sum(item.y for item in items) / len(items)
+    ordered_items = sorted(
+        items,
+        key=lambda item: (
+            math.atan2(item.y - center_y, item.x - center_x),
+            item.source_item_id,
+        ),
+    )
 
     subregions: list[_AtlasRegionDraft] = []
     subregion_key_by_source_item_id: dict[int, str] = {}
-    for region_source in sorted(
-        region_sources,
-        key=lambda source: (-len(source.items), source.cluster_key),
-    ):
-        centroid_vector = _region_source_centroid(region_source)
-        subregion_summary = _summarize_points(
-            region_source.items,
-            fallback_title=region_source.title,
+    chunk_size = math.ceil(len(ordered_items) / subregion_count)
+    for index in range(subregion_count):
+        chunk = ordered_items[index * chunk_size : (index + 1) * chunk_size]
+        if not chunk:
+            continue
+
+        chunk_summary = _summarize_points(
+            chunk,
+            fallback_title=f"{parent_region_key} / {index + 1}",
         )
-        subregion_x = round(sum(item.x for item in region_source.items) / len(region_source.items), 6)
-        subregion_y = round(sum(item.y for item in region_source.items) / len(region_source.items), 6)
-        subregion_key = f"{parent_region_key}/subregion-{region_source.cluster_key}"
-        region_shape = _build_region_shape(region_source.items, padding=24.0)
+        centroid_vector = _mean_vector([item.vector for item in chunk])
+        chunk_x = round(sum(item.x for item in chunk) / len(chunk), 3)
+        chunk_y = round(sum(item.y for item in chunk) / len(chunk), 3)
+        subregion_key = f"{parent_region_key}/subregion-{index + 1:02d}"
+        region_shape = _build_region_shape(chunk, padding=24.0)
         label_x, label_y = _compute_label_anchor(
-            region_x=subregion_x,
-            region_y=subregion_y,
+            region_x=chunk_x,
+            region_y=chunk_y,
             region_shape=region_shape,
             atlas_center=atlas_center,
         )
-        representative_rank_by_source_item_id = _representative_rank_by_source_item_id(
-            region_source.items,
-            limit=3,
-        )
-        for item in region_source.items:
+        representative_rank_by_source_item_id = _representative_rank_by_source_item_id(chunk, limit=3)
+        for item in chunk:
             subregion_key_by_source_item_id[item.source_item_id] = subregion_key
 
         subregions.append(
@@ -688,24 +599,24 @@ def _build_subregions(
                 region_key=subregion_key,
                 parent_region_key=parent_region_key,
                 level=1,
-                title=subregion_summary["title"],
-                x=subregion_x,
-                y=subregion_y,
+                title=chunk_summary["title"],
+                x=chunk_x,
+                y=chunk_y,
                 label_x=label_x,
                 label_y=label_y,
                 region_shape=region_shape,
-                item_count=len(region_source.items),
-                top_labels=subregion_summary["top_labels"],
-                top_apps=subregion_summary["top_apps"],
-                top_people=subregion_summary["top_people"],
-                top_entities=subregion_summary["top_entities"],
-                time_start=subregion_summary["time_start"],
-                time_end=subregion_summary["time_end"],
+                item_count=len(chunk),
+                top_labels=chunk_summary["top_labels"],
+                top_apps=chunk_summary["top_apps"],
+                top_people=chunk_summary["top_people"],
+                top_entities=chunk_summary["top_entities"],
+                time_start=chunk_summary["time_start"],
+                time_end=chunk_summary["time_end"],
                 representatives=_representatives_payload(representative_rank_by_source_item_id),
                 bridge_neighbors=[],
-                cohesion_score=_cohesion_score(region_source.items, centroid_vector),
+                cohesion_score=_cohesion_score(chunk, centroid_vector),
                 centroid_vector=centroid_vector,
-                items=region_source.items,
+                items=chunk,
                 representative_rank_by_source_item_id=representative_rank_by_source_item_id,
                 subregion_key_by_source_item_id={},
                 subregions=[],
@@ -714,98 +625,6 @@ def _build_subregions(
 
     _assign_subregion_bridge_neighbors(subregions)
     return subregions, subregion_key_by_source_item_id
-
-
-def _cluster_atomic_regions_into_macroregions(
-    region_sources: list[_SemanticRegionSource],
-) -> list[_MacroRegionGroup]:
-    if not region_sources:
-        return []
-
-    ordered_sources = sorted(
-        region_sources,
-        key=lambda source: (-len(source.items), source.cluster_key),
-    )
-    target_cap = min(24, max(2, round(math.sqrt(len(ordered_sources)))))
-    target_floor = max(2, target_cap // 2)
-    candidate_results: list[tuple[int, float, list[_MacroRegionGroup]]] = []
-    for threshold in MACROREGION_THRESHOLD_CANDIDATES:
-        groups = _greedy_cluster_atomic_regions(ordered_sources, similarity_threshold=threshold)
-        candidate_results.append((len(groups), threshold, groups))
-        if target_floor <= len(groups) <= target_cap:
-            return groups
-
-    overflow_candidates = [
-        (count - target_cap, -threshold, groups)
-        for count, threshold, groups in candidate_results
-        if count > target_cap
-    ]
-    if overflow_candidates:
-        return min(overflow_candidates)[2]
-
-    underflow_candidates = [
-        (target_floor - count, -threshold, groups)
-        for count, threshold, groups in candidate_results
-    ]
-    return min(underflow_candidates)[2]
-
-
-def _greedy_cluster_atomic_regions(
-    region_sources: list[_SemanticRegionSource],
-    *,
-    similarity_threshold: float,
-) -> list[_MacroRegionGroup]:
-    groups: list[_MacroRegionGroup] = []
-    for region_source in region_sources:
-        centroid_vector = _region_source_centroid(region_source)
-        weight = float(len(region_source.items))
-        best_group: _MacroRegionGroup | None = None
-        best_score = -1.0
-        for group in groups:
-            score = _cosine_similarity(centroid_vector, group.centroid_vector)
-            if score > best_score:
-                best_score = score
-                best_group = group
-
-        if best_group is None or best_score < similarity_threshold:
-            groups.append(
-                _MacroRegionGroup(
-                    region_sources=[region_source],
-                    vector_sum=[value * weight for value in centroid_vector],
-                    weight_total=weight,
-                    centroid_vector=centroid_vector,
-                )
-            )
-            continue
-
-        best_group.region_sources.append(region_source)
-        best_group.weight_total += weight
-        for index, value in enumerate(centroid_vector):
-            best_group.vector_sum[index] += value * weight
-        best_group.centroid_vector = _normalize_vector(best_group.vector_sum)
-
-    return sorted(
-        groups,
-        key=lambda group: (
-            -sum(len(region_source.items) for region_source in group.region_sources),
-            group.region_sources[0].cluster_key,
-        ),
-    )
-
-
-def _region_source_centroid(region_source: _SemanticRegionSource) -> list[float]:
-    if region_source.centroid_vector:
-        return region_source.centroid_vector
-    return _normalized_mean_vector([item.vector for item in region_source.items])
-
-
-def _compute_atlas_center(region_sources: list[_SemanticRegionSource]) -> tuple[float, float]:
-    if not region_sources:
-        return (0.0, 0.0)
-    return (
-        sum(region_source.x for region_source in region_sources) / len(region_sources),
-        sum(region_source.y for region_source in region_sources) / len(region_sources),
-    )
 
 
 def _build_item_drafts(
@@ -918,75 +737,41 @@ def _build_edge_drafts(
 
 
 def _assign_subregion_bridge_neighbors(subregions: list[_AtlasRegionDraft]) -> None:
-    neighbor_payloads = _build_neighbor_payloads(
-        subregions,
-        edge_type="internal_bridge",
-        extra_budget_divisor=2,
-    )
+    if len(subregions) < 2:
+        return
+
+    neighbors_by_region_key: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for index in range(len(subregions) - 1):
+        left_region = subregions[index]
+        right_region = subregions[index + 1]
+        weight = round(_signal_similarity(left_region.centroid_vector, right_region.centroid_vector), 6)
+
+        neighbors_by_region_key[left_region.region_key].append(
+            {
+                "edge_type": "internal_bridge",
+                "region_key": right_region.region_key,
+                "weight": weight,
+            }
+        )
+        neighbors_by_region_key[right_region.region_key].append(
+            {
+                "edge_type": "internal_bridge",
+                "region_key": left_region.region_key,
+                "weight": weight,
+            }
+        )
+
     for subregion in subregions:
-        subregion.bridge_neighbors = neighbor_payloads.get(subregion.region_key, [])
+        subregion.bridge_neighbors = sorted(
+            neighbors_by_region_key.get(subregion.region_key, []),
+            key=lambda neighbor: (-float(neighbor["weight"]), str(neighbor["region_key"])),
+        )
 
 
 def _build_sparse_semantic_edge_drafts(
     top_regions: list[_AtlasRegionDraft],
 ) -> list[_AtlasEdgeDraft]:
-    return [
-        _AtlasEdgeDraft(
-            source_region_key=source_region_key,
-            target_region_key=target_region_key,
-            weight=weight,
-            edge_type=edge_type,
-        )
-        for source_region_key, target_region_key, weight, edge_type in _build_sparse_links(
-            top_regions,
-            edge_type="semantic_similarity",
-            extra_budget_divisor=SEMANTIC_EDGE_EXTRA_BUDGET_DIVISOR,
-        )
-    ]
-
-
-def _build_neighbor_payloads(
-    regions: list[_AtlasRegionDraft],
-    *,
-    edge_type: str,
-    extra_budget_divisor: int,
-) -> dict[str, list[dict[str, object]]]:
-    neighbors_by_region_key: dict[str, list[dict[str, object]]] = defaultdict(list)
-    for source_region_key, target_region_key, weight, resolved_edge_type in _build_sparse_links(
-        regions,
-        edge_type=edge_type,
-        extra_budget_divisor=extra_budget_divisor,
-    ):
-        neighbors_by_region_key[source_region_key].append(
-            {
-                "edge_type": resolved_edge_type,
-                "region_key": target_region_key,
-                "weight": weight,
-            }
-        )
-        neighbors_by_region_key[target_region_key].append(
-            {
-                "edge_type": resolved_edge_type,
-                "region_key": source_region_key,
-                "weight": weight,
-            }
-        )
-
-    for region_key, neighbors in neighbors_by_region_key.items():
-        neighbors_by_region_key[region_key] = sorted(
-            neighbors,
-            key=lambda neighbor: (-float(neighbor["weight"]), str(neighbor["region_key"])),
-        )
-    return neighbors_by_region_key
-
-
-def _build_sparse_links(
-    regions: list[_AtlasRegionDraft],
-    *,
-    edge_type: str,
-    extra_budget_divisor: int,
-) -> list[tuple[str, str, float, str]]:
-    ordered_regions = sorted(regions, key=lambda region: region.region_key)
+    ordered_regions = sorted(top_regions, key=lambda region: region.region_key)
     if len(ordered_regions) < 2:
         return []
 
@@ -1020,16 +805,23 @@ def _build_sparse_links(
         parent_by_region_key[right_root] = left_root
         return True
 
-    selected_edges: list[tuple[str, str, float, str]] = []
+    selected_edges: list[_AtlasEdgeDraft] = []
     for weight, left_key, right_key in candidates:
         if not _union(left_key, right_key):
             continue
         selected_pairs.add((left_key, right_key))
         degree_by_region_key[left_key] += 1
         degree_by_region_key[right_key] += 1
-        selected_edges.append((left_key, right_key, weight, edge_type))
+        selected_edges.append(
+            _AtlasEdgeDraft(
+                source_region_key=left_key,
+                target_region_key=right_key,
+                weight=weight,
+                edge_type="semantic_similarity",
+            )
+        )
 
-    extra_budget = max(1, math.ceil(len(ordered_regions) / extra_budget_divisor))
+    extra_budget = max(1, math.ceil(len(ordered_regions) / SEMANTIC_EDGE_EXTRA_BUDGET_DIVISOR))
     for weight, left_key, right_key in candidates:
         if extra_budget <= 0 or (left_key, right_key) in selected_pairs:
             continue
@@ -1039,12 +831,19 @@ def _build_sparse_links(
         selected_pairs.add((left_key, right_key))
         degree_by_region_key[left_key] += 1
         degree_by_region_key[right_key] += 1
-        selected_edges.append((left_key, right_key, weight, edge_type))
+        selected_edges.append(
+            _AtlasEdgeDraft(
+                source_region_key=left_key,
+                target_region_key=right_key,
+                weight=weight,
+                edge_type="semantic_similarity",
+            )
+        )
         extra_budget -= 1
 
     return sorted(
         selected_edges,
-        key=lambda edge: (edge[0], edge[1]),
+        key=lambda edge: (edge.source_region_key, edge.target_region_key),
     )
 
 
@@ -1229,34 +1028,34 @@ def _load_semantic_map_snapshot_metadata(map_run: SemanticMapRun) -> tuple[str, 
     return embedding_type, embedding_model, embedding_version
 
 
-def _build_projection_basis(vectors: list[list[float]]) -> _ProjectionBasis:
-    if not vectors:
-        return _ProjectionBasis(origin=[0.0, 0.0], axis_x=[1.0, 0.0], axis_y=[0.0, 1.0])
-
-    origin = _mean_vector(vectors)
-    centered_vectors = [
-        [value - origin[index] for index, value in enumerate(vector)]
-        for vector in vectors
+def _signal_scale(
+    *,
+    clusters: Sequence[SemanticCluster],
+    points: Sequence[SemanticMapPoint],
+) -> float:
+    coordinate_candidates = [
+        abs(cluster.centroid_x)
+        for cluster in clusters
     ]
-    dimension = len(vectors[0])
-    axis_x = _principal_component(centered_vectors, dimension=dimension)
-    residual_vectors = [
-        _subtract_projection(vector, axis_x)
-        for vector in centered_vectors
+    coordinate_candidates.extend(abs(cluster.centroid_y) for cluster in clusters)
+    coordinate_candidates.extend(abs(point.x) for point in points)
+    coordinate_candidates.extend(abs(point.y) for point in points)
+    return max(coordinate_candidates, default=1.0) or 1.0
+
+
+def _signal_vector(*, x: float, y: float, scale: float) -> list[float]:
+    return [
+        round(x / scale, 6),
+        round(y / scale, 6),
     ]
-    axis_y = _principal_component(residual_vectors, dimension=dimension)
-    if _vector_magnitude(axis_y) == 0.0:
-        fallback = [0.0] * dimension
-        fallback[1 if dimension > 1 else 0] = 1.0
-        axis_y = fallback
-    return _ProjectionBasis(origin=origin, axis_x=axis_x, axis_y=axis_y)
 
 
-def _project_vector_to_world(vector: list[float], basis: _ProjectionBasis) -> tuple[float, float]:
-    centered = [value - basis.origin[index] for index, value in enumerate(vector)]
+def _compute_atlas_center(region_sources: list[_SemanticRegionSource]) -> tuple[float, float]:
+    if not region_sources:
+        return (0.0, 0.0)
     return (
-        round(sum(value * basis.axis_x[index] for index, value in enumerate(centered)), 6),
-        round(sum(value * basis.axis_y[index] for index, value in enumerate(centered)), 6),
+        sum(region_source.x for region_source in region_sources) / len(region_sources),
+        sum(region_source.y for region_source in region_sources) / len(region_sources),
     )
 
 
@@ -1268,67 +1067,45 @@ def _build_region_shape(
     if not points:
         return {"rings": [], "shape_type": "polygon"}
 
-    unique_points = sorted({(round(point.x, 6), round(point.y, 6)) for point in points})
-    resolved_padding = _resolve_region_shape_padding(unique_points, padding=padding)
-    if len(unique_points) < 3:
-        xs = [point[0] for point in unique_points]
-        ys = [point[1] for point in unique_points]
-        min_x = min(xs) - resolved_padding
-        max_x = max(xs) + resolved_padding
-        min_y = min(ys) - resolved_padding
-        max_y = max(ys) + resolved_padding
-        ring = [
-            {"x": round(min_x, 3), "y": round(min_y, 3)},
-            {"x": round(max_x, 3), "y": round(min_y, 3)},
-            {"x": round(max_x, 3), "y": round(max_y, 3)},
-            {"x": round(min_x, 3), "y": round(max_y, 3)},
-            {"x": round(min_x, 3), "y": round(min_y, 3)},
-        ]
-        return {"shape_type": "polygon", "rings": [ring]}
-
-    hull = _convex_hull(unique_points)
-    centroid_x = sum(point[0] for point in hull) / len(hull)
-    centroid_y = sum(point[1] for point in hull) / len(hull)
-    expanded_ring = []
-    for x, y in hull:
-        delta_x = x - centroid_x
-        delta_y = y - centroid_y
-        magnitude = math.sqrt(delta_x * delta_x + delta_y * delta_y)
-        if magnitude == 0.0:
-            expanded_x = x
-            expanded_y = y
-        else:
-            expansion = resolved_padding / magnitude
-            expanded_x = x + delta_x * expansion
-            expanded_y = y + delta_y * expansion
-        expanded_ring.append({"x": round(expanded_x, 3), "y": round(expanded_y, 3)})
-    if expanded_ring:
-        expanded_ring.append(dict(expanded_ring[0]))
+    xs = [point.x for point in points]
+    ys = [point.y for point in points]
+    min_x = min(xs) - padding
+    max_x = max(xs) + padding
+    min_y = min(ys) - padding
+    max_y = max(ys) + padding
     return {
         "shape_type": "polygon",
-        "rings": [expanded_ring],
+        "rings": [
+            [
+                {"x": round(min_x, 3), "y": round(min_y, 3)},
+                {"x": round(max_x, 3), "y": round(min_y, 3)},
+                {"x": round(max_x, 3), "y": round(max_y, 3)},
+                {"x": round(min_x, 3), "y": round(max_y, 3)},
+                {"x": round(min_x, 3), "y": round(min_y, 3)},
+            ]
+        ],
     }
 
 
 def _region_bounds(region_shape: dict[str, object]) -> tuple[float, float, float, float]:
-    ring_values = region_shape.get("rings")
-    if not isinstance(ring_values, list) or not ring_values:
+    rings = region_shape.get("rings")
+    if not isinstance(rings, list):
         return (0.0, 0.0, 0.0, 0.0)
 
     xs: list[float] = []
     ys: list[float] = []
-    for ring in ring_values:
+    for ring in rings:
         if not isinstance(ring, list):
             continue
         for point in ring:
-            x_value: object | None = None
-            y_value: object | None = None
             if isinstance(point, dict):
                 x_value = point.get("x")
                 y_value = point.get("y")
             elif isinstance(point, (list, tuple)) and len(point) >= 2:
                 x_value = point[0]
                 y_value = point[1]
+            else:
+                continue
             if isinstance(x_value, int | float) and isinstance(y_value, int | float):
                 xs.append(float(x_value))
                 ys.append(float(y_value))
@@ -1351,37 +1128,6 @@ def _compute_label_anchor(
     horizontal = -offset if region_x >= atlas_center[0] else offset
     vertical = -offset if region_y >= atlas_center[1] else offset
     return (region_x + horizontal, region_y + vertical)
-
-
-def _resolve_region_shape_padding(
-    unique_points: Sequence[tuple[float, float]],
-    *,
-    padding: float,
-) -> float:
-    if padding <= 1.0:
-        return max(float(padding), MIN_WORLD_REGION_PADDING)
-
-    if not unique_points:
-        return MIN_WORLD_REGION_PADDING
-
-    xs = [point[0] for point in unique_points]
-    ys = [point[1] for point in unique_points]
-    span_x = max(xs) - min(xs)
-    span_y = max(ys) - min(ys)
-    local_span = max(span_x, span_y)
-    if local_span == 0.0 and len(unique_points) > 1:
-        local_span = max(
-            math.dist(unique_points[index], unique_points[index - 1])
-            for index in range(1, len(unique_points))
-        )
-
-    if local_span == 0.0:
-        return MIN_WORLD_REGION_PADDING
-
-    return min(
-        MAX_WORLD_REGION_PADDING,
-        max(MIN_WORLD_REGION_PADDING, local_span * WORLD_REGION_PADDING_RATIO),
-    )
 
 
 def _summarize_points(
@@ -1663,100 +1409,6 @@ def _mean_vector(vectors: list[list[float]]) -> list[float]:
         for index, value in enumerate(vector):
             summed[index] += value
     return [value / len(vectors) for value in summed]
-
-
-def _normalized_mean_vector(vectors: list[list[float]]) -> list[float]:
-    return _normalize_vector(_mean_vector(vectors))
-
-
-def _normalize_vector(vector: list[float]) -> list[float]:
-    magnitude = _vector_magnitude(vector)
-    if magnitude == 0.0:
-        return [0.0] * len(vector)
-    return [value / magnitude for value in vector]
-
-
-def _vector_magnitude(vector: Sequence[float]) -> float:
-    return math.sqrt(sum(value * value for value in vector))
-
-
-def _principal_component(vectors: list[list[float]], *, dimension: int) -> list[float]:
-    if not vectors:
-        fallback = [0.0] * dimension
-        fallback[0] = 1.0
-        return fallback
-
-    seed_index = _highest_variance_dimension(vectors)
-    component = [0.0] * dimension
-    component[seed_index] = 1.0
-    for _ in range(24):
-        candidate = [0.0] * dimension
-        for vector in vectors:
-            projection = sum(left * right for left, right in zip(vector, component))
-            for index, value in enumerate(vector):
-                candidate[index] += projection * value
-        normalized = _normalize_vector(candidate)
-        if _vector_magnitude(normalized) == 0.0:
-            break
-        component = normalized
-
-    dominant_index = max(range(len(component)), key=lambda index: abs(component[index]))
-    if component[dominant_index] < 0:
-        component = [-value for value in component]
-    return component
-
-
-def _highest_variance_dimension(vectors: list[list[float]]) -> int:
-    dimension = len(vectors[0])
-    variances: list[tuple[float, int]] = []
-    for index in range(dimension):
-        values = [vector[index] for vector in vectors]
-        mean = sum(values) / len(values)
-        variance = sum((value - mean) ** 2 for value in values)
-        variances.append((variance, index))
-    return max(variances)[1]
-
-
-def _subtract_projection(vector: list[float], axis: list[float]) -> list[float]:
-    projection = sum(left * right for left, right in zip(vector, axis))
-    return [
-        value - projection * axis[index]
-        for index, value in enumerate(vector)
-    ]
-
-
-def _cosine_similarity(left: list[float], right: list[float]) -> float:
-    return sum(left_value * right_value for left_value, right_value in zip(left, right))
-
-
-def _convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
-    if len(points) <= 1:
-        return points
-
-    ordered_points = sorted(points)
-
-    def _cross(
-        origin: tuple[float, float],
-        left: tuple[float, float],
-        right: tuple[float, float],
-    ) -> float:
-        return ((left[0] - origin[0]) * (right[1] - origin[1])) - (
-            (left[1] - origin[1]) * (right[0] - origin[0])
-        )
-
-    lower: list[tuple[float, float]] = []
-    for point in ordered_points:
-        while len(lower) >= 2 and _cross(lower[-2], lower[-1], point) <= 0:
-            lower.pop()
-        lower.append(point)
-
-    upper: list[tuple[float, float]] = []
-    for point in reversed(ordered_points):
-        while len(upper) >= 2 and _cross(upper[-2], upper[-1], point) <= 0:
-            upper.pop()
-        upper.append(point)
-
-    return lower[:-1] + upper[:-1]
 
 
 def _signal_distance(left: list[float], right: list[float]) -> float:
