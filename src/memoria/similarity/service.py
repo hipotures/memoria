@@ -468,7 +468,7 @@ def _build_node_labels(
             continue
 
         unresolved = {node.region_key: node for node in nodes}
-        used_labels: set[str] = set()
+        used_labels: set[str] = set(labels.values())
         for candidate_index in range(3):
             candidate_counts: Counter[str] = Counter()
             for node in unresolved.values():
@@ -494,11 +494,18 @@ def _build_node_labels(
             for region_key in resolved_region_keys:
                 unresolved.pop(region_key)
 
-        for region_key, node in unresolved.items():
-            labels[region_key] = _label_candidate(node, candidate_index=2) or _display_title(
+        for region_key, node in sorted(unresolved.items()):
+            base_label = _label_candidate(node, candidate_index=2) or _display_title(
                 node.title,
                 node.region_key,
             )
+            final_label = _unique_tiebreak_label(
+                base_label=base_label,
+                region_key=node.region_key,
+                used_labels=used_labels,
+            )
+            labels[region_key] = final_label
+            used_labels.add(final_label)
 
     return labels
 
@@ -589,6 +596,12 @@ def _label_candidate(
     if candidate_index == 2:
         return f"{title} · {node.region_key[-6:]}"
     return None
+
+
+def _unique_tiebreak_label(*, base_label: str, region_key: str, used_labels: set[str]) -> str:
+    if base_label not in used_labels:
+        return base_label
+    return f"{base_label} · {region_key}"
 
 
 def _label_values_for_item(row: AtlasItem) -> list[str]:

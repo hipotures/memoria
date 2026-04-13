@@ -116,6 +116,27 @@ def test_similarity_graph_keeps_snapshot_edges_under_item_filters() -> None:
     ]
 
 
+def test_similarity_graph_guarantees_unique_labels_after_suffix_collision() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture_with_duplicate_title_label_collision(session)
+        graph = get_similarity_graph(session)
+
+    duplicate_nodes = [
+        node
+        for node in graph.nodes
+        if node.canonical_title == "chrome" and node.duplicate_title_count == 2
+    ]
+    labels_by_region = {node.region_key: node.label for node in duplicate_nodes}
+
+    assert len(duplicate_nodes) == 2
+    assert len(set(labels_by_region.values())) == 2
+    assert labels_by_region["alpha-xyz123"] == "Chrome · xyz123"
+    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 · bravo-xyz123"
+
+
 def test_build_similarity_graph_honors_explicit_zero_threshold_overrides() -> None:
     engine = create_engine("sqlite+pysqlite:///:memory:")
     Base.metadata.create_all(engine)
@@ -267,6 +288,123 @@ def _seed_similarity_fixture_with_duplicate_titles(session: Session) -> None:
         app_hint="sheets",
         semantic_summary="chrome numbers tab",
         object_refs=["topic:chrome", "entity:budget"],
+    )
+    session.commit()
+
+
+def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Session) -> None:
+    atlas_run = AtlasRun(
+        atlas_key="screenshots_atlas_v1",
+        source_family="screenshot",
+        status="completed",
+        source_count=4,
+        embedding_type="dense",
+        embedding_model="test-model",
+        embedding_version="1",
+        clustering_method="test-clustering",
+        clustering_params_json=json.dumps({"k": 2}),
+        random_seed=42,
+        layout_version="atlas-world-v1",
+        created_at=datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 4, 12, 9, 5, tzinfo=UTC),
+        published_at=datetime(2026, 4, 12, 9, 10, tzinfo=UTC),
+    )
+    session.add(atlas_run)
+    session.flush()
+
+    session.add_all(
+        [
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="alpha-xyz123",
+                parent_region_key=None,
+                level=0,
+                title="Chrome",
+                x=0.1,
+                y=0.2,
+                label_x=0.12,
+                label_y=0.26,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=2,
+                top_labels_json=json.dumps(["chrome"]),
+                top_apps_json=json.dumps([]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:alice"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 401}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.9,
+            ),
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="bravo-xyz123",
+                parent_region_key=None,
+                level=0,
+                title="Chrome",
+                x=0.6,
+                y=0.4,
+                label_x=0.62,
+                label_y=0.46,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=2,
+                top_labels_json=json.dumps(["chrome"]),
+                top_apps_json=json.dumps([]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:bob"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 501}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.8,
+            ),
+        ]
+    )
+    session.add(
+        AtlasEdge(
+            atlas_run_id=atlas_run.id,
+            source_region_key="alpha-xyz123",
+            target_region_key="bravo-xyz123",
+            weight=0.72,
+            edge_type="semantic_similarity",
+        )
+    )
+
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=401,
+        region_key="alpha-xyz123",
+        screen_category="social",
+        app_hint="",
+        semantic_summary="chrome tab alpha",
+        object_refs=["topic:chrome", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=402,
+        region_key="alpha-xyz123",
+        screen_category="social",
+        app_hint="",
+        semantic_summary="chrome tab alpha duplicate",
+        object_refs=["topic:chrome", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=501,
+        region_key="bravo-xyz123",
+        screen_category="finance",
+        app_hint="",
+        semantic_summary="chrome tab bravo",
+        object_refs=["topic:chrome", "entity:bob"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=502,
+        region_key="bravo-xyz123",
+        screen_category="finance",
+        app_hint="",
+        semantic_summary="chrome tab bravo duplicate",
+        object_refs=["topic:chrome", "entity:bob"],
     )
     session.commit()
 
