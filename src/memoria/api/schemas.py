@@ -476,6 +476,7 @@ class SimilarityGraphNodeResponse(BaseModel):
     top_labels: list[str]
     top_apps: list[str]
     top_entities: list[str]
+    is_labeled: bool
     representative_source_item_ids: list[int]
 
 

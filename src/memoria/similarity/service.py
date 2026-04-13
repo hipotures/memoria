@@ -64,6 +64,7 @@ class SimilarityGraphNode:
     top_labels: list[str]
     top_apps: list[str]
     top_entities: list[str]
+    is_labeled: bool
     representative_source_item_ids: list[int]
 
 
@@ -444,6 +445,7 @@ def _decorate_similarity_nodes(
             top_labels=node.top_labels,
             top_apps=node.top_apps,
             top_entities=node.top_entities,
+            is_labeled=bool(labels_by_region[node.region_key].strip() or node.title.strip()),
             representative_source_item_ids=node.representative_source_item_ids,
         )
         for node in raw_nodes
@@ -507,7 +509,7 @@ def _build_node_labels(
             labels[region_key] = final_label
             used_labels.add(final_label)
 
-    return labels
+    return _ensure_globally_unique_labels(raw_nodes=raw_nodes, candidate_labels=labels)
 
 
 def _build_legend(nodes: list[SimilarityGraphNode]) -> list[SimilarityGraphLegendEntry]:
@@ -599,9 +601,35 @@ def _label_candidate(
 
 
 def _unique_tiebreak_label(*, base_label: str, region_key: str, used_labels: set[str]) -> str:
-    if base_label not in used_labels:
-        return base_label
-    return f"{base_label} · {region_key}"
+    candidate = base_label
+    if candidate not in used_labels:
+        return candidate
+
+    candidate = f"{base_label} · {region_key}"
+    while candidate in used_labels:
+        candidate = f"{candidate} · {region_key}"
+    return candidate
+
+
+def _ensure_globally_unique_labels(
+    *,
+    raw_nodes: list[_RawSimilarityGraphNode],
+    candidate_labels: dict[str, str],
+) -> dict[str, str]:
+    unique_labels: dict[str, str] = {}
+    used_labels: set[str] = set()
+
+    for node in raw_nodes:
+        base_label = candidate_labels.get(node.region_key, _display_title(node.title, node.region_key))
+        final_label = _unique_tiebreak_label(
+            base_label=base_label,
+            region_key=node.region_key,
+            used_labels=used_labels,
+        )
+        unique_labels[node.region_key] = final_label
+        used_labels.add(final_label)
+
+    return unique_labels
 
 
 def _label_values_for_item(row: AtlasItem) -> list[str]:

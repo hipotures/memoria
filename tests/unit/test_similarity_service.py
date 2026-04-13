@@ -134,7 +134,7 @@ def test_similarity_graph_guarantees_unique_labels_after_suffix_collision() -> N
     assert len(duplicate_nodes) == 2
     assert len(set(labels_by_region.values())) == 2
     assert labels_by_region["alpha-xyz123"] == "Chrome · xyz123"
-    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 · bravo-xyz123"
+    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 · bravo-xyz123 · bravo-xyz123"
 
 
 def test_build_similarity_graph_honors_explicit_zero_threshold_overrides() -> None:
@@ -297,7 +297,7 @@ def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Sessi
         atlas_key="screenshots_atlas_v1",
         source_family="screenshot",
         status="completed",
-        source_count=4,
+        source_count=5,
         embedding_type="dense",
         embedding_model="test-model",
         embedding_version="1",
@@ -314,6 +314,26 @@ def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Sessi
 
     session.add_all(
         [
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="aardvark-preexisting",
+                parent_region_key=None,
+                level=0,
+                title="Chrome · xyz123 · bravo-xyz123",
+                x=0.0,
+                y=0.0,
+                label_x=0.02,
+                label_y=0.04,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=1,
+                top_labels_json=json.dumps(["preexisting"]),
+                top_apps_json=json.dumps([]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:preexisting"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 301}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.7,
+            ),
             AtlasRegion(
                 atlas_run_id=atlas_run.id,
                 region_key="alpha-xyz123",
@@ -366,6 +386,16 @@ def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Sessi
         )
     )
 
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=301,
+        region_key="aardvark-preexisting",
+        screen_category="notes",
+        app_hint="",
+        semantic_summary="preexisting label singleton",
+        object_refs=["topic:preexisting", "entity:preexisting"],
+    )
     _add_atlas_item(
         session,
         atlas_run_id=atlas_run.id,

@@ -60,6 +60,7 @@ def test_similarity_graph_endpoint_reports_graph_kind_edge_scope_and_render_labe
     assert payload["graph_kind"] == "region_similarity"
     assert payload["edge_scope"] == "atlas_snapshot"
     assert payload["nodes"][0]["label"]
+    assert payload["nodes"][0]["is_labeled"] is True
     assert payload["nodes"][0]["label_x"] != payload["nodes"][0]["x"] or payload["nodes"][0][
         "label_y"
     ] != payload["nodes"][0]["y"]
