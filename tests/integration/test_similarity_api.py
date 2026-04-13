@@ -32,7 +32,7 @@ def test_similarity_graph_endpoint_returns_nodes_edges_and_legend(tmp_path: Path
     legend_by_category = {entry["category"]: entry for entry in payload["legend"]}
     assert payload["run"]["atlas_key"] == "screenshots_atlas_v1"
     assert nodes_by_region["region-social"]["dominant_screen_category"] == "social"
-    assert payload["edges"][0]["reason"] == "shared_topic_task_signature"
+    assert payload["edges"][0]["reason"] == "semantic_similarity"
     assert legend_by_category["social"]["count"] == 1
     assert payload["filters"] == {
         "connector_instance_id": None,
@@ -47,6 +47,26 @@ def test_similarity_graph_endpoint_returns_nodes_edges_and_legend(tmp_path: Path
     }
 
 
+def test_similarity_graph_endpoint_reports_graph_kind_edge_scope_and_render_labels(
+    tmp_path: Path,
+) -> None:
+    client, engine = _create_test_client(tmp_path, "similarity-graph-shape.db")
+    _seed_similarity_fixture(engine)
+
+    response = client.get("/similarity/graph")
+
+    assert response.status_code == 200
+    payload = response.json()
+    assert payload["graph_kind"] == "region_similarity"
+    assert payload["edge_scope"] == "atlas_snapshot"
+    assert payload["nodes"][0]["label"]
+    assert payload["nodes"][0]["label_x"] != payload["nodes"][0]["x"] or payload["nodes"][0][
+        "label_y"
+    ] != payload["nodes"][0]["y"]
+    assert payload["edges"][0]["edge_type"] == "semantic_similarity"
+    assert payload["edges"][0]["reason"] == "semantic_similarity"
+
+
 def test_similarity_page_returns_fallback_html_when_frontend_build_is_missing(tmp_path: Path) -> None:
     client, _ = _create_test_client(
         tmp_path,
@@ -58,7 +78,7 @@ def test_similarity_page_returns_fallback_html_when_frontend_build_is_missing(tm
 
     assert response.status_code == 200
     assert "text/html" in response.headers["content-type"]
-    assert "Similarity graph frontend build is not present" in response.text
+    assert "Atlas region similarity graph frontend build is not present" in response.text
     assert "/similarity/graph" in response.text
 
 
@@ -167,8 +187,8 @@ def _seed_similarity_fixture(engine: object) -> None:
                     title="Social cluster",
                     x=0.1,
                     y=0.2,
-                    label_x=0.1,
-                    label_y=0.2,
+                    label_x=0.16,
+                    label_y=0.24,
                     region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
                     item_count=3,
                     top_labels_json=json.dumps(["chat", "friends", "whatsapp"]),
@@ -192,8 +212,8 @@ def _seed_similarity_fixture(engine: object) -> None:
                     title="Finance cluster",
                     x=0.7,
                     y=0.4,
-                    label_x=0.7,
-                    label_y=0.4,
+                    label_x=0.74,
+                    label_y=0.46,
                     region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
                     item_count=2,
                     top_labels_json=json.dumps(["budget"]),
@@ -267,7 +287,7 @@ def _seed_similarity_fixture(engine: object) -> None:
             source_item_id=202,
             region_key="region-finance",
             screen_category="finance",
-            app_hint="sheets",
+            app_hint="telegram",
         )
         session.commit()
 

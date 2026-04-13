@@ -102,7 +102,7 @@ def _similarity_fallback_html() -> str:
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <title>Memoria Cluster Similarity Graph</title>
+    <title>Memoria Atlas Region Similarity Graph</title>
     <style>
       body { margin: 0; font-family: sans-serif; background: #f3efe4; color: #17202a; }
       main { max-width: 820px; margin: 48px auto; padding: 32px; background: rgba(255, 255, 255, 0.88); border: 1px solid #d6cbb6; border-radius: 20px; }
@@ -116,7 +116,7 @@ def _similarity_fallback_html() -> str:
   </head>
   <body>
     <main>
-      <h1>Similarity graph frontend build is not present</h1>
+      <h1>Atlas region similarity graph frontend build is not present</h1>
       <p>The similarity graph API is available and the dedicated frontend bundle can be added later. Until then, use the JSON endpoint directly:</p>
       <ul>
         <li><code>/similarity/graph</code> for graph nodes, similarity edges, legend entries, and active filters.</li>

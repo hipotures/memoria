@@ -19,8 +19,8 @@ from memoria.domain.models import AtlasRegion
 from memoria.domain.models import AtlasRun
 
 _DEFAULT_CATEGORY = "unknown"
-_REASON_SHARED_TOPIC_TASK_SIGNATURE = "shared_topic_task_signature"
 _MAX_METADATA_VALUES = 5
+_MAX_REPRESENTATIVE_SOURCE_ITEM_IDS = 8
 _SUMMARY_TOKEN_PATTERN = re.compile(r"[a-z0-9]{3,}")
 _CATEGORY_COLORS = {
     "chat": "#6EC5FF",
@@ -49,15 +49,21 @@ class SimilarityGraphRun:
 class SimilarityGraphNode:
     region_key: str
     title: str
+    label: str
+    canonical_title: str
+    duplicate_title_count: int
     x: float
     y: float
+    label_x: float
+    label_y: float
     size: float
     item_count: int
+    degree: int
+    label_priority: float
     dominant_screen_category: str
     top_labels: list[str]
     top_apps: list[str]
     top_entities: list[str]
-    is_labeled: bool
     representative_source_item_ids: list[int]
 
 
@@ -67,6 +73,7 @@ class SimilarityGraphEdge:
     target_region_key: str
     weight: float
     support: int
+    edge_type: str
     reason: str
 
 
@@ -84,10 +91,30 @@ class SimilarityGraph:
     edges: list[SimilarityGraphEdge]
     legend: list[SimilarityGraphLegendEntry]
     filters: SimilarityGraphFilters
+    graph_kind: str
+    edge_scope: str
+    default_label_limit: int | None = None
 
 
 @dataclass(frozen=True, slots=True)
 class _RegionSliceStats:
+    item_count: int
+    dominant_screen_category: str
+    top_labels: list[str]
+    top_apps: list[str]
+    top_entities: list[str]
+    representative_source_item_ids: list[int]
+
+
+@dataclass(frozen=True, slots=True)
+class _RawSimilarityGraphNode:
+    region_key: str
+    title: str
+    x: float
+    y: float
+    label_x: float
+    label_y: float
+    size: float
     item_count: int
     dominant_screen_category: str
     top_labels: list[str]
@@ -117,27 +144,31 @@ def get_similarity_graph(
             edges=[],
             legend=[],
             filters=resolved_filters,
+            graph_kind="region_similarity",
+            edge_scope="atlas_snapshot",
         )
 
-    nodes = _load_similarity_nodes(
+    raw_nodes = _load_similarity_nodes(
         session,
         atlas_run_id=atlas_run.id,
         filters=resolved_filters,
     )
-    region_keys = {node.region_key for node in nodes}
+    region_keys = {node.region_key for node in raw_nodes}
     edges = _load_similarity_edges(
         session,
         atlas_run_id=atlas_run.id,
         region_keys=region_keys,
-        filters=resolved_filters,
         min_edge_weight=resolved_filters.min_edge_weight,
     )
+    nodes = _decorate_similarity_nodes(raw_nodes, edges)
     return SimilarityGraph(
         run=_build_run_view(atlas_run),
         nodes=nodes,
         edges=edges,
         legend=_build_legend(nodes),
         filters=resolved_filters,
+        graph_kind="region_similarity",
+        edge_scope="atlas_snapshot",
     )
 
 
@@ -176,7 +207,7 @@ def _load_similarity_nodes(
     *,
     atlas_run_id: int,
     filters: SimilarityGraphFilters,
-) -> list[SimilarityGraphNode]:
+) -> list[_RawSimilarityGraphNode]:
     use_snapshot_metadata = not _has_non_threshold_item_filters(filters)
     region_slice_stats = _load_region_slice_stats(
         session,
@@ -203,11 +234,13 @@ def _load_similarity_nodes(
     ).all()
 
     return [
-        SimilarityGraphNode(
+        _RawSimilarityGraphNode(
             region_key=row.region_key,
             title=row.title,
             x=row.x,
             y=row.y,
+            label_x=row.label_x,
+            label_y=row.label_y,
             size=_node_size(region_slice_stats[row.region_key].item_count),
             item_count=region_slice_stats[row.region_key].item_count,
             dominant_screen_category=region_slice_stats[row.region_key].dominant_screen_category,
@@ -226,7 +259,6 @@ def _load_similarity_nodes(
                 if use_snapshot_metadata
                 else region_slice_stats[row.region_key].top_entities
             ),
-            is_labeled=bool(row.title.strip()),
             representative_source_item_ids=(
                 _snapshot_representative_source_item_ids(row.representatives_json)
                 if use_snapshot_metadata
@@ -314,6 +346,9 @@ def _build_region_slice_stats(rows: list[AtlasItem]) -> _RegionSliceStats:
         for rank, source_item_id in sorted(representative_entries, key=lambda entry: (entry[0], entry[1]))
     ]
     representative_source_item_ids.extend(sorted(fallback_representatives))
+    representative_source_item_ids = representative_source_item_ids[
+        :_MAX_REPRESENTATIVE_SOURCE_ITEM_IDS
+    ]
 
     return _RegionSliceStats(
         item_count=len(rows),
@@ -330,10 +365,9 @@ def _load_similarity_edges(
     *,
     atlas_run_id: int,
     region_keys: set[str],
-    filters: SimilarityGraphFilters,
     min_edge_weight: float,
 ) -> list[SimilarityGraphEdge]:
-    if not region_keys or _has_non_threshold_item_filters(filters):
+    if not region_keys:
         return []
 
     rows = session.scalars(
@@ -357,7 +391,8 @@ def _load_similarity_edges(
             target_region_key=row.target_region_key,
             weight=row.weight,
             support=1,
-            reason=_REASON_SHARED_TOPIC_TASK_SIGNATURE,
+            edge_type=row.edge_type,
+            reason=row.edge_type,
         )
         for row in rows
     ]
@@ -370,6 +405,102 @@ def _build_run_view(row: AtlasRun) -> SimilarityGraphRun:
         generated_at=row.created_at,
         source_count=row.source_count,
     )
+
+
+def _decorate_similarity_nodes(
+    raw_nodes: list[_RawSimilarityGraphNode],
+    edges: list[SimilarityGraphEdge],
+) -> list[SimilarityGraphNode]:
+    degree_by_region = _compute_node_degree(edges)
+    canonical_titles = {
+        node.region_key: _canonical_title(node.title, node.region_key) for node in raw_nodes
+    }
+    duplicate_title_counts = Counter(canonical_titles.values())
+    labels_by_region = _build_node_labels(
+        raw_nodes=raw_nodes,
+        canonical_titles=canonical_titles,
+        duplicate_title_counts=duplicate_title_counts,
+    )
+
+    return [
+        SimilarityGraphNode(
+            region_key=node.region_key,
+            title=node.title,
+            label=labels_by_region[node.region_key],
+            canonical_title=canonical_titles[node.region_key],
+            duplicate_title_count=duplicate_title_counts[canonical_titles[node.region_key]],
+            x=node.x,
+            y=node.y,
+            label_x=node.label_x,
+            label_y=node.label_y,
+            size=node.size,
+            item_count=node.item_count,
+            degree=degree_by_region.get(node.region_key, 0),
+            label_priority=_compute_label_priority(
+                item_count=node.item_count,
+                degree=degree_by_region.get(node.region_key, 0),
+            ),
+            dominant_screen_category=node.dominant_screen_category,
+            top_labels=node.top_labels,
+            top_apps=node.top_apps,
+            top_entities=node.top_entities,
+            representative_source_item_ids=node.representative_source_item_ids,
+        )
+        for node in raw_nodes
+    ]
+
+
+def _build_node_labels(
+    *,
+    raw_nodes: list[_RawSimilarityGraphNode],
+    canonical_titles: dict[str, str],
+    duplicate_title_counts: Counter[str],
+) -> dict[str, str]:
+    grouped_nodes: dict[str, list[_RawSimilarityGraphNode]] = {}
+    for node in raw_nodes:
+        grouped_nodes.setdefault(canonical_titles[node.region_key], []).append(node)
+
+    labels: dict[str, str] = {}
+    for canonical_title, nodes in grouped_nodes.items():
+        if duplicate_title_counts[canonical_title] <= 1:
+            node = nodes[0]
+            labels[node.region_key] = _display_title(node.title, node.region_key)
+            continue
+
+        unresolved = {node.region_key: node for node in nodes}
+        used_labels: set[str] = set()
+        for candidate_index in range(3):
+            candidate_counts: Counter[str] = Counter()
+            for node in unresolved.values():
+                candidate = _label_candidate(
+                    node,
+                    candidate_index=candidate_index,
+                )
+                if candidate is not None:
+                    candidate_counts[candidate] += 1
+
+            resolved_region_keys: list[str] = []
+            for region_key, node in unresolved.items():
+                candidate = _label_candidate(
+                    node,
+                    candidate_index=candidate_index,
+                )
+                if candidate is None or candidate_counts[candidate] != 1 or candidate in used_labels:
+                    continue
+                labels[region_key] = candidate
+                used_labels.add(candidate)
+                resolved_region_keys.append(region_key)
+
+            for region_key in resolved_region_keys:
+                unresolved.pop(region_key)
+
+        for region_key, node in unresolved.items():
+            labels[region_key] = _label_candidate(node, candidate_index=2) or _display_title(
+                node.title,
+                node.region_key,
+            )
+
+    return labels
 
 
 def _build_legend(nodes: list[SimilarityGraphNode]) -> list[SimilarityGraphLegendEntry]:
@@ -395,6 +526,22 @@ def _node_size(item_count: int) -> float:
     return round(10.0 + (math.sqrt(max(item_count, 1)) * 4.0), 3)
 
 
+def _normalize_title(value: str) -> str:
+    return " ".join(value.strip().lower().replace("_", " ").replace("-", " ").split())
+
+
+def _compute_node_degree(edges: list[SimilarityGraphEdge]) -> dict[str, int]:
+    degree: Counter[str] = Counter()
+    for edge in edges:
+        degree[edge.source_region_key] += 1
+        degree[edge.target_region_key] += 1
+    return dict(degree)
+
+
+def _compute_label_priority(*, item_count: int, degree: int) -> float:
+    return float(item_count + 3 * degree)
+
+
 def _snapshot_representative_source_item_ids(raw_value: str | None) -> list[int]:
     payload = _json_value(raw_value, default=[])
     if not isinstance(payload, list):
@@ -408,7 +555,40 @@ def _snapshot_representative_source_item_ids(raw_value: str | None) -> list[int]
         source_item_id = entry.get("source_item_id")
         if isinstance(rank, int) and isinstance(source_item_id, int):
             ranked_entries.append((rank, source_item_id))
-    return [source_item_id for rank, source_item_id in sorted(ranked_entries, key=lambda entry: (entry[0], entry[1]))]
+    return [
+        source_item_id
+        for rank, source_item_id in sorted(ranked_entries, key=lambda entry: (entry[0], entry[1]))[
+            :_MAX_REPRESENTATIVE_SOURCE_ITEM_IDS
+        ]
+    ]
+
+
+def _canonical_title(title: str, region_key: str) -> str:
+    normalized = _normalize_title(title)
+    return normalized or _normalize_title(region_key)
+
+
+def _display_title(title: str, region_key: str) -> str:
+    stripped = title.strip()
+    return stripped or region_key
+
+
+def _label_candidate(
+    node: _RawSimilarityGraphNode,
+    *,
+    candidate_index: int,
+) -> str | None:
+    title = _display_title(node.title, node.region_key)
+    if candidate_index == 0:
+        top_app = node.top_apps[0].strip() if node.top_apps else ""
+        if top_app:
+            return f"{title} · {top_app}"
+        return None
+    if candidate_index == 1:
+        return f"{title} · {node.item_count}"
+    if candidate_index == 2:
+        return f"{title} · {node.region_key[-6:]}"
+    return None
 
 
 def _label_values_for_item(row: AtlasItem) -> list[str]:

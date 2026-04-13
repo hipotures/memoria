@@ -372,6 +372,20 @@ class AtlasEdgeResponse(BaseModel):
     edge_type: str
 
 
+class AtlasOverviewPointResponse(BaseModel):
+    source_item_id: int
+    region_key: str
+    subregion_key: str | None
+    x: float
+    y: float
+    app_hint: str | None
+    matches_filters: bool
+    is_representative: bool
+    representative_rank: int | None
+    is_bridge: bool
+    bridge_score: float
+
+
 class AtlasItemResponse(BaseModel):
     source_item_id: int
     region_key: str
@@ -408,6 +422,7 @@ class AtlasOverviewResponse(BaseModel):
     atlas_run: AtlasRunResponse | None
     regions: list[AtlasRegionResponse]
     edges: list[AtlasEdgeResponse]
+    points: list[AtlasOverviewPointResponse]
     active_filters: AtlasFiltersResponse
 
 
@@ -446,15 +461,21 @@ class SimilarityGraphRunResponse(BaseModel):
 class SimilarityGraphNodeResponse(BaseModel):
     region_key: str
     title: str
+    label: str
+    canonical_title: str
+    duplicate_title_count: int
     x: float
     y: float
+    label_x: float
+    label_y: float
     size: float
     item_count: int
+    degree: int
+    label_priority: float
     dominant_screen_category: str
     top_labels: list[str]
     top_apps: list[str]
     top_entities: list[str]
-    is_labeled: bool
     representative_source_item_ids: list[int]
 
 
@@ -463,6 +484,7 @@ class SimilarityGraphEdgeResponse(BaseModel):
     target_region_key: str
     weight: float
     support: int
+    edge_type: str
     reason: str
 
 
@@ -478,3 +500,6 @@ class SimilarityGraphResponse(BaseModel):
     edges: list[SimilarityGraphEdgeResponse]
     legend: list[SimilarityGraphLegendEntryResponse]
     filters: SimilarityGraphFiltersResponse
+    graph_kind: str
+    edge_scope: str
+    default_label_limit: int | None = None
