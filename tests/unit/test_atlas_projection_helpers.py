@@ -2,10 +2,38 @@ from __future__ import annotations
 
 from memoria.atlas.contracts import AtlasCandidateItem
 from memoria.atlas.contracts import PriorRegionIdentity
+from memoria.atlas.projection import _AtlasPoint
+from memoria.atlas.projection import _compute_label_anchor
+from memoria.atlas.projection import _build_region_shape
+from memoria.atlas.projection import _summarize_points
 from memoria.atlas.projection import classify_bridge
 from memoria.atlas.projection import derive_subregion_count
 from memoria.atlas.projection import match_region_identity
 from memoria.atlas.projection import select_representatives
+
+
+def _make_point(
+    *,
+    cluster_hints: list[str] | None = None,
+    app_hint: str | None = None,
+) -> _AtlasPoint:
+    return _AtlasPoint(
+        source_item_id=1,
+        cluster_key="cluster-a",
+        x=0.0,
+        y=0.0,
+        vector=[1.0, 0.0],
+        semantic_summary="summary",
+        app_hint=app_hint,
+        connector_instance_id="test",
+        screen_category="chat",
+        has_knowledge=False,
+        observed_at=None,
+        object_refs=[],
+        knowledge_count=0,
+        searchable_labels=[],
+        cluster_hints=cluster_hints or [],
+    )
 
 
 def test_derive_subregion_count_scales_with_region_size() -> None:
@@ -155,3 +183,154 @@ def test_match_region_identity_returns_none_for_weak_overlap() -> None:
     )
 
     assert matched is None
+
+
+def test_build_region_title_prefers_semantic_label_over_generic_platform() -> None:
+    summary = _summarize_points(
+        [
+            _make_point(cluster_hints=["chrome", "dns management"], app_hint="chrome"),
+            _make_point(cluster_hints=["chrome", "dns management"], app_hint="chrome"),
+        ],
+        fallback_title="cluster-001",
+    )
+
+    assert summary["title"] == "chrome · dns management"
+
+
+def test_build_region_title_falls_back_to_two_semantic_labels_without_app() -> None:
+    summary = _summarize_points(
+        [
+            _make_point(cluster_hints=["delivery status", "refund tracking"], app_hint=None),
+            _make_point(cluster_hints=["delivery status", "refund tracking"], app_hint=None),
+        ],
+        fallback_title="cluster-002",
+    )
+
+    assert summary["title"] == "delivery status, refund tracking"
+
+
+def test_compute_label_anchor_offsets_from_region_center() -> None:
+    anchor_x, anchor_y = _compute_label_anchor(
+        region_x=0.4,
+        region_y=0.5,
+        region_shape={"shape_type": "polygon", "rings": [[[0.35, 0.45], [0.45, 0.45], [0.45, 0.55], [0.35, 0.55]]]},
+        atlas_center=(0.5, 0.5),
+    )
+
+    assert (anchor_x, anchor_y) != (0.4, 0.5)
+    assert anchor_y < 0.5 or anchor_x != 0.4
+
+
+def test_build_region_shape_uses_world_scale_padding_for_small_local_clusters() -> None:
+    shape = _build_region_shape(
+        [
+            _AtlasPoint(
+                source_item_id=1,
+                cluster_key="cluster-a",
+                x=-0.12,
+                y=0.09,
+                vector=[1.0, 0.0],
+                semantic_summary="First",
+                app_hint="terminal",
+                connector_instance_id="test",
+                screen_category="chat",
+                has_knowledge=False,
+                observed_at=None,
+                object_refs=[],
+                knowledge_count=0,
+                searchable_labels=[],
+                cluster_hints=[],
+            ),
+            _AtlasPoint(
+                source_item_id=2,
+                cluster_key="cluster-a",
+                x=0.03,
+                y=0.22,
+                vector=[0.9, 0.1],
+                semantic_summary="Second",
+                app_hint="terminal",
+                connector_instance_id="test",
+                screen_category="chat",
+                has_knowledge=False,
+                observed_at=None,
+                object_refs=[],
+                knowledge_count=0,
+                searchable_labels=[],
+                cluster_hints=[],
+            ),
+        ],
+        padding=24.0,
+    )
+
+    ring = shape["rings"][0]
+    xs = [point["x"] for point in ring]
+    ys = [point["y"] for point in ring]
+
+    assert max(xs) - min(xs) < 1.0
+    assert max(ys) - min(ys) < 1.0
+
+
+def test_build_region_shape_caps_polygon_expansion_to_world_scale() -> None:
+    shape = _build_region_shape(
+        [
+            _AtlasPoint(
+                source_item_id=1,
+                cluster_key="cluster-a",
+                x=-0.08,
+                y=0.05,
+                vector=[1.0, 0.0],
+                semantic_summary="First",
+                app_hint="terminal",
+                connector_instance_id="test",
+                screen_category="chat",
+                has_knowledge=False,
+                observed_at=None,
+                object_refs=[],
+                knowledge_count=0,
+                searchable_labels=[],
+                cluster_hints=[],
+            ),
+            _AtlasPoint(
+                source_item_id=2,
+                cluster_key="cluster-a",
+                x=0.02,
+                y=0.18,
+                vector=[0.9, 0.1],
+                semantic_summary="Second",
+                app_hint="terminal",
+                connector_instance_id="test",
+                screen_category="chat",
+                has_knowledge=False,
+                observed_at=None,
+                object_refs=[],
+                knowledge_count=0,
+                searchable_labels=[],
+                cluster_hints=[],
+            ),
+            _AtlasPoint(
+                source_item_id=3,
+                cluster_key="cluster-a",
+                x=0.11,
+                y=0.06,
+                vector=[0.8, 0.2],
+                semantic_summary="Third",
+                app_hint="terminal",
+                connector_instance_id="test",
+                screen_category="chat",
+                has_knowledge=False,
+                observed_at=None,
+                object_refs=[],
+                knowledge_count=0,
+                searchable_labels=[],
+                cluster_hints=[],
+            ),
+        ],
+        padding=42.0,
+    )
+
+    ring = shape["rings"][0]
+    xs = [point["x"] for point in ring]
+    ys = [point["y"] for point in ring]
+
+    assert max(xs) - min(xs) < 1.0
+    assert max(ys) - min(ys) < 1.0
