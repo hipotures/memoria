@@ -134,6 +134,72 @@ describe("buildSimilarityFigure", () => {
     });
   });
 
+  it("preserves legacy showLabels compatibility for current callers", () => {
+    const figure = buildSimilarityFigure(graphFixture, legacyFigureOptions(false, "region-research"));
+
+    expect(findTextTrace(figure)).toMatchObject({
+      mode: "text",
+      text: [],
+      x: [],
+      y: [],
+    });
+  });
+
+  it("falls back to legacy labeled-node titles and node centers when render metadata is absent", () => {
+    const figure = buildSimilarityFigure(legacyGraphFixture, legacyFigureOptions(true));
+
+    expect(findTextTrace(figure)).toMatchObject({
+      text: ["Social cluster", "Utility cluster"],
+      x: [0.12, -0.3],
+      y: [0.44, -0.2],
+    });
+  });
+
+  it("prefers explicit labelMode over legacy showLabels compatibility", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      labelMode: "selected",
+      showLabels: false,
+      selectedRegionKey: "region-research",
+      visibleCategories: null,
+    });
+
+    expect(findTextTrace(figure)).toMatchObject({
+      text: ["chrome · dns management"],
+      x: [0.32],
+      y: [0.44],
+    });
+  });
+
+  it("uses a default label limit of 20 when the backend omits one", () => {
+    const { default_label_limit: _defaultLabelLimit, ...graphWithoutDefaultLimitBase } = graphFixture;
+    const graphWithoutDefaultLimit: SimilarityGraphResponse = {
+      ...graphWithoutDefaultLimitBase,
+      nodes: Array.from({ length: 25 }, (_, index) => ({
+        ...graphFixture.nodes[0],
+        region_key: `region-${index}`,
+        title: `Cluster ${index}`,
+        label: `label ${String(index).padStart(2, "0")}`,
+        canonical_title: `Cluster ${index}`,
+        x: index,
+        y: index * -1,
+        label_x: index + 0.5,
+        label_y: index * -1 - 0.25,
+        label_priority: 100 - index,
+        representative_source_item_ids: [index],
+      })),
+      legend: [{ category: "social", color: "#d6ad64", count: 25 }],
+      edges: [],
+    };
+
+    const figure = buildSimilarityFigure(graphWithoutDefaultLimit, figureOptions("default"));
+
+    expect(findTextTrace(figure)).toMatchObject({
+      text: Array.from({ length: 20 }, (_, index) => `label ${String(index).padStart(2, "0")}`),
+      x: Array.from({ length: 20 }, (_, index) => index + 0.5),
+      y: Array.from({ length: 20 }, (_, index) => index * -1 - 0.25),
+    });
+  });
+
   it("formats hover content without exposing region keys or top entities", () => {
     const figure = buildSimilarityFigure(graphFixture, figureOptions("default"));
 
@@ -328,6 +394,7 @@ const graphFixture = {
       target_region_key: "region-research",
       weight: 0.61,
       support: 9,
+      edge_type: "semantic_similarity",
       reason: "shared_topic_task_signature",
     },
     {
@@ -335,6 +402,7 @@ const graphFixture = {
       target_region_key: "region-utility",
       weight: 0.44,
       support: 4,
+      edge_type: "semantic_similarity",
       reason: "shared_topic_task_signature",
     },
   ],
@@ -369,6 +437,19 @@ const graphFixture = {
   default_label_limit: 2,
 } as SimilarityGraphResponse;
 
+const legacyGraphFixture = {
+  ...graphFixture,
+  nodes: graphFixture.nodes.map((node, index) => {
+    const { label, canonical_title, duplicate_title_count, label_x, label_y, degree, label_priority, ...legacyNode } =
+      node;
+
+    return {
+      ...legacyNode,
+      is_labeled: index !== 1,
+    };
+  }),
+} as SimilarityGraphResponse;
+
 function figureOptions(
   labelMode: "none" | "default" | "all" | "selected",
   selectedRegionKey: string | null = null,
@@ -376,6 +457,18 @@ function figureOptions(
 ): Parameters<typeof buildSimilarityFigure>[1] {
   return {
     labelMode,
+    selectedRegionKey,
+    visibleCategories,
+  };
+}
+
+function legacyFigureOptions(
+  showLabels: boolean,
+  selectedRegionKey: string | null = null,
+  visibleCategories: Set<string> | null = null,
+): Parameters<typeof buildSimilarityFigure>[1] {
+  return {
+    showLabels,
     selectedRegionKey,
     visibleCategories,
   };

@@ -7,6 +7,13 @@ import type {
 type FigureTrace = Record<string, unknown>;
 type FigureLayout = Record<string, unknown>;
 type FigureConfig = Record<string, unknown>;
+type LegacySimilarityGraphNode = SimilarityGraphNode & {
+  is_labeled?: boolean;
+  label?: string;
+  label_x?: number;
+  label_y?: number;
+  label_priority?: number;
+};
 
 export type SimilarityFigure = {
   data: FigureTrace[];
@@ -17,7 +24,8 @@ export type SimilarityFigure = {
 export type LabelMode = "none" | "default" | "all" | "selected";
 
 export type SimilarityFigureOptions = {
-  labelMode: LabelMode;
+  labelMode?: LabelMode;
+  showLabels?: boolean;
   selectedRegionKey: string | null;
   visibleCategories: Set<string> | null;
 };
@@ -26,6 +34,7 @@ export function buildSimilarityFigure(
   graph: SimilarityGraphResponse,
   options: SimilarityFigureOptions,
 ): SimilarityFigure {
+  const labelMode = resolveLabelMode(options);
   const allNodesByRegionKey = new Map(graph.nodes.map((node) => [node.region_key, node]));
   const visibleNodes = filterVisibleNodes(graph.nodes, options.visibleCategories);
   const nodesByRegionKey = new Map(visibleNodes.map((node) => [node.region_key, node]));
@@ -121,7 +130,7 @@ export function buildSimilarityFigure(
 
   const labeledNodes = selectLabeledNodes(
     visibleNodes,
-    options,
+    { ...options, labelMode },
     selectedNode,
     defaultLabelLimit,
   );
@@ -130,9 +139,9 @@ export function buildSimilarityFigure(
     mode: "text",
     showlegend: false,
     hoverinfo: "skip",
-    text: labeledNodes.map((node) => node.label),
-    x: labeledNodes.map((node) => node.label_x),
-    y: labeledNodes.map((node) => node.label_y),
+    text: labeledNodes.map((node) => resolveNodeLabel(node)),
+    x: labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "x")),
+    y: labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "y")),
     textposition: "middle center",
     textfont: {
       color: "rgba(235,240,245,0.92)",
@@ -192,6 +201,18 @@ export function buildSimilarityFigure(
       scrollZoom: true,
     },
   };
+}
+
+function resolveLabelMode(options: SimilarityFigureOptions): LabelMode {
+  if (options.labelMode !== undefined) {
+    return options.labelMode;
+  }
+
+  if (options.showLabels === false) {
+    return "none";
+  }
+
+  return "default";
 }
 
 function filterVisibleNodes(
@@ -329,13 +350,18 @@ function selectLabeledNodes(
     return nodes;
   }
 
-  return [...nodes]
-    .sort(
-      (left, right) =>
-        right.label_priority - left.label_priority ||
-        left.label.localeCompare(right.label),
-    )
-    .slice(0, defaultLabelLimit);
+  const nodesWithRenderMetadata = nodes.filter(hasBackendLabelMetadata);
+  if (nodesWithRenderMetadata.length > 0) {
+    return [...nodesWithRenderMetadata]
+      .sort(
+        (left, right) =>
+          resolveNodeLabelPriority(right) - resolveNodeLabelPriority(left) ||
+          resolveNodeLabel(left).localeCompare(resolveNodeLabel(right)),
+      )
+      .slice(0, defaultLabelLimit);
+  }
+
+  return nodes.filter((node) => isLegacyLabeledNode(node));
 }
 
 function joinList(values: string[]): string {
@@ -344,4 +370,43 @@ function joinList(values: string[]): string {
   }
 
   return values.join(", ");
+}
+
+function hasBackendLabelMetadata(node: SimilarityGraphNode): boolean {
+  const legacyNode = node as LegacySimilarityGraphNode;
+
+  return (
+    typeof legacyNode.label === "string" &&
+    typeof legacyNode.label_x === "number" &&
+    typeof legacyNode.label_y === "number" &&
+    typeof legacyNode.label_priority === "number"
+  );
+}
+
+function isLegacyLabeledNode(node: SimilarityGraphNode): boolean {
+  const legacyNode = node as LegacySimilarityGraphNode;
+  return legacyNode.is_labeled === true;
+}
+
+function resolveNodeLabel(node: SimilarityGraphNode): string {
+  const legacyNode = node as LegacySimilarityGraphNode;
+  return typeof legacyNode.label === "string" ? legacyNode.label : node.title;
+}
+
+function resolveNodeLabelCoordinate(
+  node: SimilarityGraphNode,
+  axis: "x" | "y",
+): number {
+  const legacyNode = node as LegacySimilarityGraphNode;
+
+  if (axis === "x") {
+    return typeof legacyNode.label_x === "number" ? legacyNode.label_x : node.x;
+  }
+
+  return typeof legacyNode.label_y === "number" ? legacyNode.label_y : node.y;
+}
+
+function resolveNodeLabelPriority(node: SimilarityGraphNode): number {
+  const legacyNode = node as LegacySimilarityGraphNode;
+  return typeof legacyNode.label_priority === "number" ? legacyNode.label_priority : 0;
 }

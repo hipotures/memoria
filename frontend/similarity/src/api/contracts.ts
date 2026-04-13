@@ -45,6 +45,7 @@ export type SimilarityGraphEdge = {
   target_region_key: string;
   weight: number;
   support: number;
+  edge_type: string;
   reason: string;
 };
 
