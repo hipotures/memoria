@@ -131,6 +131,15 @@ describe("App", () => {
 
   it("shows a lightweight summary and atlas handoff when a node is selected", async () => {
     window.history.replaceState({}, "", "/proxy-prefix/similarity");
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+
+      if (url.pathname === "/similarity/graph" || url.pathname.endsWith("/similarity/graph")) {
+        return jsonResponse(buildGraphPayload({ duplicateTitles: true }));
+      }
+
+      throw new Error(`Unhandled similarity request: ${url.pathname}`);
+    });
 
     await act(async () => {
       root.render(<App />);
@@ -142,7 +151,13 @@ describe("App", () => {
       plotlyClickHandler?.({
         points: [
           {
-            customdata: ["region-a", "Research region", 17, "research"],
+            customdata: [
+              "region-a",
+              "chrome · triage queue",
+              "Inbox region",
+              17,
+              "research",
+            ],
             data: { name: "research" },
             pointNumber: 0,
           },
@@ -150,12 +165,15 @@ describe("App", () => {
       });
     });
 
-    await waitForText(container, "chrome · dns management");
+    await waitForText(container, "chrome · triage queue");
     const selectionCard = findElementByLabel(container, "Selected similarity region");
     expect(selectionCard.textContent).toContain("region-a");
+    expect(selectionCard.textContent).toContain("Inbox region");
     expect(findDefinitionValue(selectionCard, "Degree")?.textContent).toBe("2");
     expect(selectionCard.textContent).not.toContain("region similarity");
     expect(selectionCard.textContent).not.toContain("Degree: 2");
+    expect(container.textContent).toContain("Selected region: chrome · triage queue");
+    expect(container.textContent).not.toContain("Selected region: Inbox region");
     expect(findLink(container, "Region details").getAttribute("href")).toBe(
       "/proxy-prefix/atlas/regions/region-a",
     );
@@ -204,7 +222,13 @@ describe("App", () => {
       plotlyClickHandler?.({
         points: [
           {
-            customdata: ["region-a", "Research region", 17, "research"],
+            customdata: [
+              "region-a",
+              "chrome · dns management",
+              "Research region",
+              17,
+              "research",
+            ],
             data: { name: "research" },
             pointNumber: 0,
           },
@@ -212,7 +236,7 @@ describe("App", () => {
       });
     });
 
-    await waitForText(container, "Selected region: Research region");
+    await waitForText(container, "Selected region: chrome · dns management");
     const baselinePlotUpdates = reactMock.mock.calls.length;
 
     act(() => {
@@ -581,7 +605,14 @@ function buildGraphPayload(options?: {
   atlasKey?: string;
   minClusterSize?: number;
   minEdgeWeight?: number;
+  duplicateTitles?: boolean;
 }) {
+  const socialTitle = options?.duplicateTitles ? "Inbox region" : "Social region";
+  const researchTitle = options?.duplicateTitles ? "Inbox region" : "Research region";
+  const researchLabel = options?.duplicateTitles
+    ? "chrome · triage queue"
+    : "chrome · dns management";
+
   return {
     run: {
       atlas_run_id: 7,
@@ -592,7 +623,7 @@ function buildGraphPayload(options?: {
     nodes: [
       {
         region_key: "region-b",
-        title: "Social region",
+        title: socialTitle,
         label: "telegram · chat reply",
         canonical_title: "social region",
         duplicate_title_count: 1,
@@ -612,8 +643,8 @@ function buildGraphPayload(options?: {
       },
       {
         region_key: "region-a",
-        title: "Research region",
-        label: "chrome · dns management",
+        title: researchTitle,
+        label: researchLabel,
         canonical_title: "research region",
         duplicate_title_count: 1,
         x: 0.68,

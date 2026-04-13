@@ -137,11 +137,18 @@ def _rewrite_frontend_asset_paths(html: str, *, asset_base_path: str) -> str:
         attribute = match.group(1)
         quote = match.group(2)
         raw_path = match.group(3)
-        normalized = raw_path.removeprefix("./").removeprefix("/")
+        normalized = _normalize_frontend_asset_path(raw_path)
         return f"{attribute}={quote}{asset_base_path}/{normalized}{quote}"
 
     return re.sub(
-        r"""(src|href)=(["'])((?:/|\./)?assets/[^"']+)["']""",
+        r"""(src|href)=(["'])((?:/|\./)?(?:similarity/)?assets/[^"']+)["']""",
         _replace,
         html,
     )
+
+
+def _normalize_frontend_asset_path(raw_path: str) -> str:
+    normalized = raw_path.removeprefix("./").removeprefix("/")
+    if normalized.startswith("similarity/"):
+        return normalized.removeprefix("similarity/")
+    return normalized

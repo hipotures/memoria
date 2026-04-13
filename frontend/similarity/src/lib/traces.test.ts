@@ -19,7 +19,15 @@ describe("buildSimilarityFigure", () => {
       mode: "markers",
       name: "social",
       customdata: [
-        ["region-social", "Social region", 21, "social", "live streaming, creator tools", "TikTok"],
+        [
+          "region-social",
+          "tiktok · live streaming",
+          "Social region",
+          21,
+          "social",
+          "live streaming, creator tools",
+          "TikTok",
+        ],
       ],
       marker: {
         color: "#00F5D4",
@@ -223,10 +231,11 @@ describe("buildSimilarityFigure", () => {
     expect(findTrace(figure, "social")).toMatchObject({
       hovertemplate:
         "<b>%{customdata[1]}</b><br>" +
-        "items: %{customdata[2]}<br>" +
-        "screen category: %{customdata[3]}<br>" +
-        "top labels: %{customdata[4]}<br>" +
-        "top apps: %{customdata[5]}<extra></extra>",
+        "title: %{customdata[2]}<br>" +
+        "items: %{customdata[3]}<br>" +
+        "screen category: %{customdata[4]}<br>" +
+        "top labels: %{customdata[5]}<br>" +
+        "top apps: %{customdata[6]}<extra></extra>",
     });
   });
 
@@ -237,6 +246,7 @@ describe("buildSimilarityFigure", () => {
       customdata: [
         [
           "region-research",
+          "chrome · dns management",
           "Research region",
           17,
           "research",
@@ -244,6 +254,49 @@ describe("buildSimilarityFigure", () => {
           "Chrome",
         ],
       ],
+    });
+  });
+
+  it("uses disambiguated labels as hover headings while keeping raw titles in secondary metadata", () => {
+    const figure = buildSimilarityFigure(
+      {
+        ...graphFixture,
+        nodes: [
+          {
+            ...graphFixture.nodes[0],
+            title: "Inbox region",
+            label: "telegram · chat reply",
+          },
+          {
+            ...graphFixture.nodes[1],
+            title: "Inbox region",
+            label: "chrome · dns management",
+          },
+          ...graphFixture.nodes.slice(2),
+        ],
+      },
+      figureOptions("default"),
+    );
+
+    expect(findTrace(figure, "social")).toMatchObject({
+      customdata: [
+        [
+          "region-social",
+          "telegram · chat reply",
+          "Inbox region",
+          21,
+          "social",
+          "live streaming, creator tools",
+          "TikTok",
+        ],
+      ],
+      hovertemplate:
+        "<b>%{customdata[1]}</b><br>" +
+        "title: %{customdata[2]}<br>" +
+        "items: %{customdata[3]}<br>" +
+        "screen category: %{customdata[4]}<br>" +
+        "top labels: %{customdata[5]}<br>" +
+        "top apps: %{customdata[6]}<extra></extra>",
     });
   });
 

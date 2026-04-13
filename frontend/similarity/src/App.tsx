@@ -215,7 +215,7 @@ export default function App() {
 
         {selectedNode ? (
           <aside className="similarity-selection-card" aria-label="Selected similarity region">
-            <h3>{selectedNode.label}</h3>
+            <h3>{resolveNodeDisplayLabel(selectedNode)}</h3>
             <dl>
               <div>
                 <dt>Title</dt>
@@ -256,7 +256,11 @@ export default function App() {
             <code>{graph?.filters.min_cluster_size ?? minClusterSizeInput}</code>, edge weight{" "}
             <code>{graph?.filters.min_edge_weight ?? minEdgeWeightInput}</code>
           </p>
-          <p>{selectedNode ? `Selected region: ${selectedNode.title}` : "Selected region: none"}</p>
+          <p>
+            {selectedNode
+              ? `Selected region: ${resolveNodeDisplayLabel(selectedNode)}`
+              : "Selected region: none"}
+          </p>
           <p>{graph?.run ? `Atlas source: ${graph.run.atlas_key}` : "Atlas source unavailable"}</p>
         </footer>
       </section>
@@ -474,6 +478,10 @@ function isRegionVisible(
 ): boolean {
   const node = graph.nodes.find((entry) => entry.region_key === regionKey);
   return node ? visibleCategories.has(node.dominant_screen_category) : false;
+}
+
+function resolveNodeDisplayLabel(node: SimilarityGraphResponse["nodes"][number]): string {
+  return node.label.trim().length > 0 ? node.label : node.title;
 }
 
 function buildAtlasHandoffUrl(

@@ -104,6 +104,7 @@ def test_similarity_page_serves_built_frontend_and_bundle_assets(tmp_path: Path)
     assert "Similarity graph frontend build is not present" not in page_response.text
     assert "/similarity/assets/app.js" in page_response.text
     assert "/similarity/assets/app.css" in page_response.text
+    assert "/similarity/similarity/assets/" not in page_response.text
 
     assert script_response.status_code == 200
     assert "text/javascript" in script_response.headers["content-type"]
@@ -128,6 +129,7 @@ def test_similarity_page_rewrites_assets_with_root_path_prefix(tmp_path: Path) -
     assert response.status_code == 200
     assert 'href="/proxy-prefix/similarity/assets/app.css"' in response.text
     assert 'src="/proxy-prefix/similarity/assets/app.js"' in response.text
+    assert "/proxy-prefix/similarity/similarity/assets/" not in response.text
 
 
 def test_similarity_create_test_client_uses_stub_runtime_engines(tmp_path: Path, monkeypatch) -> None:
@@ -370,11 +372,11 @@ def _create_fake_frontend_dist(tmp_path: Path) -> Path:
 <html lang="en">
   <head>
     <meta charset="utf-8" />
-    <link rel="stylesheet" href="/assets/app.css" />
+    <link rel="stylesheet" crossorigin href="/similarity/assets/app.css" />
   </head>
   <body>
     <div id="root">Similarity frontend</div>
-    <script type="module" src="/assets/app.js"></script>
+    <script type="module" crossorigin src="/similarity/assets/app.js"></script>
   </body>
 </html>""",
         encoding="utf-8",

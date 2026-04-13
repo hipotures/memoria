@@ -82,9 +82,10 @@ export function buildSimilarityFigure(
       name: entry.category,
       x: categoryNodes.map((node) => node.x),
       y: categoryNodes.map((node) => node.y),
-      text: categoryNodes.map((node) => node.title),
+      text: categoryNodes.map((node) => resolveNodeLabel(node)),
       customdata: categoryNodes.map((node) => [
         node.region_key,
+        resolveNodeLabel(node),
         node.title,
         node.item_count,
         node.dominant_screen_category,
@@ -105,10 +106,11 @@ export function buildSimilarityFigure(
       visible: categoryIsVisible ? true : "legendonly",
       hovertemplate:
         "<b>%{customdata[1]}</b><br>" +
-        "items: %{customdata[2]}<br>" +
-        "screen category: %{customdata[3]}<br>" +
-        "top labels: %{customdata[4]}<br>" +
-        "top apps: %{customdata[5]}<extra></extra>",
+        "title: %{customdata[2]}<br>" +
+        "items: %{customdata[3]}<br>" +
+        "screen category: %{customdata[4]}<br>" +
+        "top labels: %{customdata[5]}<br>" +
+        "top apps: %{customdata[6]}<extra></extra>",
     };
   });
 
