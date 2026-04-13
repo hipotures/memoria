@@ -188,26 +188,6 @@ export default function App() {
           </button>
         </form>
 
-        {graph ? (
-          <div className="similarity-node-picker" aria-label="Similarity regions">
-            {graph.nodes.map((node) => (
-              <button
-                key={node.region_key}
-                className="similarity-node-picker__button"
-                type="button"
-                aria-pressed={selectedRegionKey === node.region_key}
-                onClick={() => {
-                  setSelectedRegionKey((current) =>
-                    current === node.region_key ? null : node.region_key,
-                  );
-                }}
-              >
-                {node.label}
-              </button>
-            ))}
-          </div>
-        ) : null}
-
         <div className="similarity-stage-card__stage">
           <div
             ref={stageRef}
@@ -227,9 +207,6 @@ export default function App() {
 
         {selectedNode ? (
           <aside className="similarity-selection-card" aria-label="Selected similarity region">
-            <p className="similarity-selection-card__eyebrow">
-              {graph?.graph_kind ?? "region similarity"}
-            </p>
             <h3>{selectedNode.label}</h3>
             <dl>
               <div>

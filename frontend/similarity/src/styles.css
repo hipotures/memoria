@@ -192,27 +192,6 @@ code {
   outline-offset: 2px;
 }
 
-.similarity-node-picker {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 10px;
-  margin-top: 16px;
-}
-
-.similarity-node-picker__button {
-  border: 1px solid rgba(113, 156, 178, 0.22);
-  border-radius: 999px;
-  padding: 0.55rem 0.9rem;
-  background: rgba(10, 27, 37, 0.92);
-  color: rgba(244, 247, 250, 0.94);
-  cursor: pointer;
-}
-
-.similarity-node-picker__button[aria-pressed="true"] {
-  border-color: rgba(214, 173, 100, 0.48);
-  background: rgba(34, 52, 63, 0.92);
-}
-
 .similarity-control__checkbox-shell {
   display: inline-flex;
   align-items: center;
@@ -299,16 +278,8 @@ code {
   border: 1px solid rgba(113, 156, 178, 0.22);
 }
 
-.similarity-selection-card__eyebrow {
-  margin: 0;
-  color: var(--accent);
-  text-transform: uppercase;
-  letter-spacing: 0.12em;
-  font-size: 0.74rem;
-}
-
 .similarity-selection-card h3 {
-  margin: 0.5rem 0 0;
+  margin: 0;
   font-family: "Iowan Old Style", "Palatino Linotype", serif;
   font-size: 1.5rem;
 }
@@ -387,7 +358,6 @@ code {
     justify-content: space-between;
   }
 
-  .similarity-node-picker__button,
   .similarity-selection-card__actions a {
     width: 100%;
     justify-content: center;

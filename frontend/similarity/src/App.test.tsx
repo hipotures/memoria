@@ -1,13 +1,10 @@
 import { act } from "react";
-import type { ReactElement } from "react";
 import type { Root } from "react-dom/client";
 import { createRoot } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
 import { buildSimilarityRequestUrl } from "./api/client";
 import App from "./App";
-
-let activeRoot: Root | null = null;
 
 describe("App", () => {
   let container: HTMLDivElement;
@@ -41,7 +38,6 @@ describe("App", () => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
-    activeRoot = root;
     plotlyClickHandler = null;
     plotlyLegendClickHandler = null;
     plotlyLegendDoubleClickHandler = null;
@@ -77,7 +73,6 @@ describe("App", () => {
     act(() => {
       root.unmount();
     });
-    activeRoot = null;
     container.remove();
   });
 
@@ -134,18 +129,31 @@ describe("App", () => {
   });
 
   it("shows a lightweight summary and atlas handoff when a node is selected", async () => {
-    render(<App />);
+    await act(async () => {
+      root.render(<App />);
+    });
 
-    await screen.findByText("Overview graph");
-    fireEvent.click(await screen.findByRole("button", { name: /chrome · dns management/i }));
+    await waitForText(container, "Overview graph");
 
-    expect(screen.getByText(/region similarity/i)).not.toBeNull();
-    expect(screen.getByText(/region-a/i)).not.toBeNull();
-    expect(screen.getByText(/degree: 2/i)).not.toBeNull();
-    expect(screen.getByRole("link", { name: /region details/i }).getAttribute("href")).toBe(
-      "/atlas/regions/region-a",
-    );
-    expect(screen.getByRole("link", { name: /evidence/i }).getAttribute("href")).toBe(
+    act(() => {
+      plotlyClickHandler?.({
+        points: [
+          {
+            customdata: ["region-a", "Research cluster", 17, "research"],
+            data: { name: "research" },
+            pointNumber: 0,
+          },
+        ],
+      });
+    });
+
+    await waitForText(container, "chrome · dns management");
+    const selectionCard = findElementByLabel(container, "Selected similarity region");
+    expect(selectionCard.textContent).toContain("region-a");
+    expect(selectionCard.textContent).toContain("Degree2");
+    expect(selectionCard.textContent).not.toContain("region similarity");
+    expect(findLink(container, "Region details").getAttribute("href")).toBe("/atlas/regions/region-a");
+    expect(findLink(container, "Evidence").getAttribute("href")).toBe(
       "/atlas/evidence?region_key=region-a",
     );
   });
@@ -423,142 +431,11 @@ async function flushMicrotasks(): Promise<void> {
   });
 }
 
-function render(component: ReactElement): void {
-  if (activeRoot === null) {
-    throw new Error("No active root available for render.");
-  }
-
-  act(() => {
-    activeRoot.render(component);
-  });
-}
-
-const fireEvent = {
-  click(element: HTMLElement): void {
-    clickElement(element);
-  },
-};
-
-const screen = {
-  getByText(text: RegExp | string): HTMLElement {
-    return findText(document.body, text);
-  },
-  async findByText(text: RegExp | string): Promise<HTMLElement> {
-    await waitForTextValue(document.body, text);
-    return findText(document.body, text);
-  },
-  getByRole(role: "button" | "link", options: { name: RegExp | string }): HTMLElement {
-    return findElementByRole(document.body, role, options.name);
-  },
-  async findByRole(role: "button" | "link", options: { name: RegExp | string }): Promise<HTMLElement> {
-    await waitForRole(document.body, role, options.name);
-    return findElementByRole(document.body, role, options.name);
-  },
-};
-
 function requestPaths(fetchMock: ReturnType<typeof vi.fn>): string[] {
   return fetchMock.mock.calls.map(([input]) => {
     const url = new URL(String(input), "http://localhost");
     return `${url.pathname}${url.search}`;
   });
-}
-
-async function waitForTextValue(container: HTMLElement, text: RegExp | string): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (queryText(container, text) !== null) {
-      return;
-    }
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-
-  throw new Error(`Timed out waiting for text: ${String(text)}`);
-}
-
-async function waitForRole(
-  container: HTMLElement,
-  role: "button" | "link",
-  name: RegExp | string,
-): Promise<void> {
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    if (queryElementByRole(container, role, name) !== null) {
-      return;
-    }
-
-    await act(async () => {
-      await Promise.resolve();
-    });
-  }
-
-  throw new Error(`Timed out waiting for role ${role} with name ${String(name)}`);
-}
-
-function findText(container: HTMLElement, text: RegExp | string): HTMLElement {
-  const element = queryText(container, text);
-  if (element === null) {
-    throw new Error(`Could not find text: ${String(text)}`);
-  }
-
-  return element;
-}
-
-function queryText(container: HTMLElement, text: RegExp | string): HTMLElement | null {
-  const elements = [container, ...Array.from(container.querySelectorAll("*"))];
-
-  for (const element of elements) {
-    const content = element.textContent?.trim();
-    if (!content) {
-      continue;
-    }
-
-    if (matchesText(content, text)) {
-      return element as HTMLElement;
-    }
-  }
-
-  return null;
-}
-
-function findElementByRole(
-  container: HTMLElement,
-  role: "button" | "link",
-  name: RegExp | string,
-): HTMLElement {
-  const element = queryElementByRole(container, role, name);
-  if (element === null) {
-    throw new Error(`Could not find role ${role} with name ${String(name)}`);
-  }
-
-  return element;
-}
-
-function queryElementByRole(
-  container: HTMLElement,
-  role: "button" | "link",
-  name: RegExp | string,
-): HTMLElement | null {
-  const selector = role === "button" ? "button" : "a";
-  const candidates = Array.from(container.querySelectorAll(selector));
-
-  for (const candidate of candidates) {
-    const accessibleName = candidate.textContent?.trim() ?? "";
-    if (matchesText(accessibleName, name)) {
-      return candidate as HTMLElement;
-    }
-  }
-
-  return null;
-}
-
-function matchesText(content: string, text: RegExp | string): boolean {
-  if (typeof text === "string") {
-    return content.includes(text);
-  }
-
-  text.lastIndex = 0;
-  return text.test(content);
 }
 
 function findInput(container: HTMLElement, labelText: string): HTMLInputElement {
@@ -608,6 +485,26 @@ function findButton(container: HTMLElement, text: string): HTMLButtonElement {
   }
 
   return button;
+}
+
+function findLink(container: HTMLElement, text: string): HTMLAnchorElement {
+  const links = Array.from(container.querySelectorAll("a"));
+  const link = links.find((candidate) => candidate.textContent?.includes(text));
+
+  if (!(link instanceof HTMLAnchorElement)) {
+    throw new Error(`Could not find link: ${text}`);
+  }
+
+  return link;
+}
+
+function findElementByLabel(container: HTMLElement, label: string): HTMLElement {
+  const element = container.querySelector(`[aria-label="${label}"]`);
+  if (!(element instanceof HTMLElement)) {
+    throw new Error(`Could not find element with aria-label: ${label}`);
+  }
+
+  return element;
 }
 
 function changeInputValue(input: HTMLInputElement, value: string): void {
