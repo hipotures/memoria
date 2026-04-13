@@ -119,11 +119,21 @@ export default function App() {
   const regionDetailsHref =
     selectedNode === null
       ? null
-      : buildAtlasHandoffUrl(`/atlas/regions/${encodeURIComponent(selectedNode.region_key)}`);
+      : buildAtlasHandoffUrl(
+          `/atlas/regions/${encodeURIComponent(selectedNode.region_key)}`,
+          {},
+          undefined,
+          import.meta.env.VITE_SIMILARITY_API_ORIGIN,
+        );
   const evidenceHref =
     selectedNode === null
       ? null
-      : buildAtlasHandoffUrl("/atlas/evidence", { region_key: selectedNode.region_key });
+      : buildAtlasHandoffUrl(
+          "/atlas/evidence",
+          { region_key: selectedNode.region_key },
+          undefined,
+          import.meta.env.VITE_SIMILARITY_API_ORIGIN,
+        );
 
   return (
     <main className="similarity-app-shell">
@@ -488,8 +498,12 @@ function buildAtlasHandoffUrl(
   path: string,
   params: Record<string, string> = {},
   currentPath?: string,
+  baseUrl?: string | null,
 ): string {
-  const url = new URL(resolveAtlasHandoffPath(path, currentPath), "http://memoria.local");
+  const atlasOrigin = normalizeConfiguredOrigin(baseUrl);
+  const handoffPath =
+    atlasOrigin === null ? resolveAtlasHandoffPath(path, currentPath) : path;
+  const url = new URL(handoffPath, atlasOrigin ?? "http://memoria.local");
 
   for (const [key, value] of Object.entries(params)) {
     if (value.length > 0) {
@@ -497,7 +511,11 @@ function buildAtlasHandoffUrl(
     }
   }
 
-  return `${url.pathname}${url.search}`;
+  if (atlasOrigin === null) {
+    return `${url.pathname}${url.search}`;
+  }
+
+  return url.toString();
 }
 
 function resolveAtlasHandoffPath(path: string, currentPath?: string): string {
@@ -529,4 +547,13 @@ function normalizeCurrentPath(currentPath?: string): string | null {
   }
 
   return trimmed.endsWith("/") ? trimmed.slice(0, -1) : trimmed;
+}
+
+function normalizeConfiguredOrigin(origin?: string | null): string | null {
+  if (origin === undefined || origin === null) {
+    return null;
+  }
+
+  const trimmed = origin.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }

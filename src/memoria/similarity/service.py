@@ -594,7 +594,7 @@ def _label_candidate(
 
 
 def _clean_region_key_label(node: _RawSimilarityGraphNode) -> str:
-    return f"{_display_title(node.title, node.region_key)} · {node.region_key}"
+    return f"{_display_title(node.title, node.region_key)} · {node.region_key[-6:]}"
 
 
 def _ensure_globally_unique_labels(

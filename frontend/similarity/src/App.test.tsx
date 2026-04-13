@@ -71,6 +71,7 @@ describe("App", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
+    vi.unstubAllEnvs();
     act(() => {
       root.unmount();
     });
@@ -179,6 +180,52 @@ describe("App", () => {
     );
     expect(findLink(container, "Evidence").getAttribute("href")).toBe(
       "/proxy-prefix/atlas/evidence?region_key=region-a",
+    );
+  });
+
+  it("uses configured API origin for atlas handoff links", async () => {
+    vi.stubEnv("VITE_SIMILARITY_API_ORIGIN", "http://backend.test:8001");
+    window.history.replaceState({}, "", "/similarity");
+    fetchMock.mockImplementation(async (input: RequestInfo | URL) => {
+      const url = new URL(String(input), "http://localhost");
+
+      if (url.pathname === "/similarity/graph" || url.pathname.endsWith("/similarity/graph")) {
+        return jsonResponse(buildGraphPayload({ duplicateTitles: true }));
+      }
+
+      throw new Error(`Unhandled similarity request: ${url.pathname}`);
+    });
+
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Overview graph");
+
+    act(() => {
+      plotlyClickHandler?.({
+        points: [
+          {
+            customdata: [
+              "region-a",
+              "chrome · triage queue",
+              "Inbox region",
+              17,
+              "research",
+            ],
+            data: { name: "research" },
+            pointNumber: 0,
+          },
+        ],
+      });
+    });
+
+    await waitForText(container, "chrome · triage queue");
+    expect(findLink(container, "Region details").getAttribute("href")).toBe(
+      "http://backend.test:8001/atlas/regions/region-a",
+    );
+    expect(findLink(container, "Evidence").getAttribute("href")).toBe(
+      "http://backend.test:8001/atlas/evidence?region_key=region-a",
     );
   });
 

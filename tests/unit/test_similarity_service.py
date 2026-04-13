@@ -134,7 +134,7 @@ def test_similarity_graph_guarantees_unique_labels_after_suffix_collision() -> N
     assert len(duplicate_nodes) == 2
     assert len(set(labels_by_region.values())) == 2
     assert labels_by_region["alpha-xyz123"] == "Chrome · xyz123"
-    assert labels_by_region["bravo-xyz123"] == "Chrome · bravo-xyz123 #2"
+    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 #2"
 
 
 def test_similarity_graph_keeps_legacy_is_labeled_semantics_for_blank_titles() -> None:
