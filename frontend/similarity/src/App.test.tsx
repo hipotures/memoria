@@ -183,6 +183,30 @@ describe("App", () => {
     );
   });
 
+  it("selects a region when the click comes from an overlay trace", async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Overview graph");
+
+    act(() => {
+      plotlyClickHandler?.({
+        points: [
+          {
+            customdata: "region-a",
+            pointNumber: 0,
+          },
+        ],
+      });
+    });
+
+    await waitForText(container, "Selected region: chrome · dns management");
+    expect(findElementByLabel(container, "Selected similarity region").textContent).toContain(
+      "region-a",
+    );
+  });
+
   it("uses configured API origin for atlas handoff links", async () => {
     vi.stubEnv("VITE_SIMILARITY_API_ORIGIN", "http://backend.test:8001");
     window.history.replaceState({}, "", "/similarity");

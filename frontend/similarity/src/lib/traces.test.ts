@@ -54,6 +54,7 @@ describe("buildSimilarityFigure", () => {
       mode: "text",
       showlegend: false,
       text: ["chrome · dns management", "tiktok · live streaming"],
+      customdata: ["region-research", "region-social"],
     });
 
     expect(figure.layout).toMatchObject({
@@ -111,6 +112,7 @@ describe("buildSimilarityFigure", () => {
       hoverinfo: "skip",
       x: [0.68],
       y: [0.23],
+      customdata: ["region-research"],
       marker: {
         symbol: "circle-open",
         line: {

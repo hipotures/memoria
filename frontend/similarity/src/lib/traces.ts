@@ -142,6 +142,7 @@ export function buildSimilarityFigure(
           hoverinfo: "skip",
           x: [selectedNode.x],
           y: [selectedNode.y],
+          customdata: [selectedNode.region_key],
           marker: {
             size: [selectedNode.size + 10],
             symbol: "circle-open",
@@ -167,6 +168,7 @@ export function buildSimilarityFigure(
     text: labeledNodes.map((node) => resolveNodeLabel(node)),
     x: labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "x")),
     y: labeledNodes.map((node) => resolveNodeLabelCoordinate(node, "y")),
+    customdata: labeledNodes.map((node) => node.region_key),
     textposition: "middle center",
     textfont: {
       color: "rgba(235,240,245,0.92)",
