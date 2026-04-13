@@ -11,6 +11,9 @@
   --text: #edf4f7;
   --muted: #9cb8c5;
   --accent: #d6ad64;
+  --chip-bg: rgba(18, 38, 50, 0.88);
+  --chip-border: rgba(158, 193, 207, 0.12);
+  --input-bg: rgba(9, 24, 34, 0.92);
   background:
     radial-gradient(circle at top left, rgba(214, 173, 100, 0.18), transparent 28%),
     radial-gradient(circle at right 20%, rgba(98, 167, 193, 0.12), transparent 26%),
@@ -124,11 +127,97 @@ code {
 .similarity-stage-card__footer p {
   margin: 0;
   padding: 8px 12px;
-  border: 1px solid rgba(158, 193, 207, 0.12);
+  border: 1px solid var(--chip-border);
   border-radius: 999px;
-  background: rgba(18, 38, 50, 0.88);
+  background: var(--chip-bg);
   color: var(--muted);
   font-size: 0.9rem;
+}
+
+.similarity-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 12px;
+  margin-top: 18px;
+}
+
+.similarity-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 10px 8px 14px;
+  border: 1px solid var(--chip-border);
+  border-radius: 999px;
+  background: var(--chip-bg);
+  color: var(--muted);
+  min-height: 48px;
+}
+
+.similarity-control--checkbox {
+  padding-right: 8px;
+}
+
+.similarity-control__label {
+  color: var(--text);
+  font-size: 0.94rem;
+  white-space: nowrap;
+}
+
+.similarity-control__input {
+  width: clamp(5rem, 7vw, 6.5rem);
+  min-width: 0;
+  padding: 8px 12px;
+  border: 1px solid rgba(158, 193, 207, 0.16);
+  border-radius: 999px;
+  background: var(--input-bg);
+  color: var(--text);
+  text-align: center;
+}
+
+.similarity-control__input:focus-visible,
+.similarity-controls__submit:focus-visible,
+.similarity-control__checkbox:focus-visible {
+  outline: 2px solid rgba(214, 173, 100, 0.72);
+  outline-offset: 2px;
+}
+
+.similarity-control__checkbox-shell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  border: 1px solid rgba(158, 193, 207, 0.16);
+  border-radius: 999px;
+  background: var(--input-bg);
+}
+
+.similarity-control__checkbox {
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  accent-color: #5ed0c0;
+}
+
+.similarity-controls__submit {
+  border: 1px solid rgba(214, 173, 100, 0.24);
+  border-radius: 999px;
+  padding: 12px 16px;
+  background:
+    linear-gradient(180deg, rgba(214, 173, 100, 0.14), rgba(214, 173, 100, 0.08)),
+    var(--chip-bg);
+  color: var(--text);
+  cursor: pointer;
+  transition:
+    border-color 160ms ease,
+    transform 160ms ease,
+    background-color 160ms ease;
+}
+
+.similarity-controls__submit:hover {
+  border-color: rgba(214, 173, 100, 0.38);
+  transform: translateY(-1px);
 }
 
 .similarity-stage-card__stage {
@@ -184,6 +273,16 @@ code {
 
   .similarity-stage-card__meta {
     justify-content: flex-start;
+  }
+
+  .similarity-controls {
+    align-items: stretch;
+  }
+
+  .similarity-control,
+  .similarity-controls__submit {
+    width: 100%;
+    justify-content: space-between;
   }
 
   .similarity-stage-card__stage {

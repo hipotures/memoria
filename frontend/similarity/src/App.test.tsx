@@ -21,12 +21,26 @@ describe("App", () => {
         }>;
       }) => void)
     | null;
+  let plotlyLegendClickHandler:
+    | ((event: {
+        curveNumber?: number;
+        data?: { name?: string };
+      }) => boolean | void)
+    | null;
+  let plotlyLegendDoubleClickHandler:
+    | ((event: {
+        curveNumber?: number;
+        data?: { name?: string };
+      }) => boolean | void)
+    | null;
 
   beforeEach(() => {
     container = document.createElement("div");
     document.body.appendChild(container);
     root = createRoot(container);
     plotlyClickHandler = null;
+    plotlyLegendClickHandler = null;
+    plotlyLegendDoubleClickHandler = null;
 
     fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url = new URL(String(input), "http://localhost");
@@ -113,6 +127,99 @@ describe("App", () => {
         symbol: "circle-open",
       },
     });
+  });
+
+  it("rebuilds edges when legend toggles hide a category", async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Atlas source: screenshots_atlas_v1");
+    const baselinePlotUpdates = reactMock.mock.calls.length;
+
+    act(() => {
+      const returnValue = plotlyLegendClickHandler?.({
+        curveNumber: 2,
+        data: { name: "research" },
+      });
+      expect(returnValue).toBe(false);
+    });
+
+    await waitForPlotUpdates(reactMock, baselinePlotUpdates + 1);
+    const lastFigureData = reactMock.mock.calls.at(-1)?.[1] as Array<Record<string, unknown>>;
+    expect(lastFigureData[0]).toMatchObject({
+      x: [],
+      y: [],
+    });
+    expect(lastFigureData.find((trace) => trace.name === "research")).toMatchObject({
+      x: [0.68],
+      y: [0.23],
+      visible: "legendonly",
+    });
+  });
+
+  it("clears selection when legend isolation hides the selected category", async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Cluster similarity network");
+
+    act(() => {
+      plotlyClickHandler?.({
+        points: [
+          {
+            customdata: ["region-research", "Research cluster", 17, "research"],
+            data: { name: "research" },
+            pointNumber: 0,
+          },
+        ],
+      });
+    });
+
+    await waitForText(container, "Selected cluster: Research cluster");
+    const baselinePlotUpdates = reactMock.mock.calls.length;
+
+    act(() => {
+      const returnValue = plotlyLegendDoubleClickHandler?.({
+        curveNumber: 1,
+        data: { name: "social" },
+      });
+      expect(returnValue).toBe(false);
+    });
+
+    await waitForPlotUpdates(reactMock, baselinePlotUpdates + 1);
+    expect(container.textContent).toContain("Selected cluster: none");
+    const lastFigureData = reactMock.mock.calls.at(-1)?.[1] as Array<Record<string, unknown>>;
+    expect(lastFigureData.find((trace) => trace.name === "selected-highlight")).toBeUndefined();
+    expect(lastFigureData[0]).toMatchObject({
+      x: [],
+      y: [],
+    });
+  });
+
+  it("renders the filter bar as grouped pill controls", async () => {
+    await act(async () => {
+      root.render(<App />);
+    });
+
+    await waitForText(container, "Apply graph filters");
+
+    const controls = container.querySelector(".similarity-controls");
+    expect(controls).not.toBeNull();
+
+    const controlGroups = Array.from(container.querySelectorAll(".similarity-control"));
+    expect(controlGroups).toHaveLength(3);
+    expect(controlGroups.map((group) => group.querySelector(".similarity-control__label")?.textContent)).toEqual([
+      "Min cluster size",
+      "Min edge weight",
+      "Show labels",
+    ]);
+
+    expect(findInput(container, "Min cluster size").classList.contains("similarity-control__input")).toBe(true);
+    expect(findInput(container, "Min edge weight").classList.contains("similarity-control__input")).toBe(true);
+    expect(findCheckbox(container, "Show labels").classList.contains("similarity-control__checkbox")).toBe(true);
+    expect(findButton(container, "Apply graph filters").classList.contains("similarity-controls__submit")).toBe(true);
   });
 
   it("ignores stale filter responses when a newer apply request resolves first", async () => {
@@ -207,12 +314,20 @@ describe("App", () => {
 
   function bindPlotlyEvents(element: HTMLElement): void {
     const plotElement = element as HTMLElement & {
-      on?: (eventName: string, handler: typeof plotlyClickHandler) => HTMLElement;
+      on?: (eventName: string, handler: unknown) => HTMLElement;
     };
 
-    plotElement.on = vi.fn((eventName: string, handler: typeof plotlyClickHandler) => {
+    plotElement.on = vi.fn((eventName: string, handler: unknown) => {
       if (eventName === "plotly_click") {
-        plotlyClickHandler = handler;
+        plotlyClickHandler = handler as typeof plotlyClickHandler;
+      }
+
+      if (eventName === "plotly_legendclick") {
+        plotlyLegendClickHandler = handler as typeof plotlyLegendClickHandler;
+      }
+
+      if (eventName === "plotly_legenddoubleclick") {
+        plotlyLegendDoubleClickHandler = handler as typeof plotlyLegendDoubleClickHandler;
       }
 
       return plotElement;

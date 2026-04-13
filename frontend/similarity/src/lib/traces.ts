@@ -17,17 +17,26 @@ export type SimilarityFigure = {
 export type SimilarityFigureOptions = {
   showLabels: boolean;
   selectedRegionKey: string | null;
+  visibleCategories: Set<string> | null;
 };
 
 export function buildSimilarityFigure(
   graph: SimilarityGraphResponse,
   options: SimilarityFigureOptions,
 ): SimilarityFigure {
-  const nodesByRegionKey = new Map(graph.nodes.map((node) => [node.region_key, node]));
+  const allNodesByRegionKey = new Map(graph.nodes.map((node) => [node.region_key, node]));
+  const visibleNodes = filterVisibleNodes(graph.nodes, options.visibleCategories);
+  const nodesByRegionKey = new Map(visibleNodes.map((node) => [node.region_key, node]));
   const selectedNode =
     options.selectedRegionKey !== null
       ? nodesByRegionKey.get(options.selectedRegionKey) ?? null
       : null;
+  const visibleEdges = filterVisibleEdges(
+    graph.edges,
+    allNodesByRegionKey,
+    options.visibleCategories,
+    selectedNode?.region_key ?? null,
+  );
 
   const edgeTrace = {
     type: "scattergl",
@@ -35,17 +44,21 @@ export function buildSimilarityFigure(
     hoverinfo: "skip",
     showlegend: false,
     line: {
-      color: "rgba(180,220,220,0.20)",
-      width: 0.6,
+      color:
+        selectedNode === null ? "rgba(180,220,220,0.18)" : "rgba(214,232,239,0.34)",
+      width: selectedNode === null ? 0.7 : 1.2,
     },
-    x: edgeCoordinates(graph.edges, nodesByRegionKey, "x"),
-    y: edgeCoordinates(graph.edges, nodesByRegionKey, "y"),
+    x: edgeCoordinates(visibleEdges, allNodesByRegionKey, "x"),
+    y: edgeCoordinates(visibleEdges, allNodesByRegionKey, "y"),
   };
 
   const nodeTraces = graph.legend.map((entry) => {
     const categoryNodes = graph.nodes.filter(
       (node) => node.dominant_screen_category === entry.category,
     );
+    const categoryIsVisible =
+      options.visibleCategories === null || options.visibleCategories.has(entry.category);
+    const categoryColor = resolveCategoryColor(entry.category, entry.color);
 
     return {
       type: "scattergl",
@@ -64,13 +77,14 @@ export function buildSimilarityFigure(
       ]),
       marker: {
         size: categoryNodes.map((node) => node.size),
-        color: entry.color,
+        color: categoryColor,
         opacity: 0.9,
         line: {
-          color: "rgba(255,255,255,0.35)",
+          color: "rgba(255,255,255,0.4)",
           width: 0.8,
         },
       },
+      visible: categoryIsVisible ? true : "legendonly",
       hovertemplate:
         "<b>%{customdata[1]}</b><br>" +
         "items: %{customdata[2]}<br>" +
@@ -102,7 +116,7 @@ export function buildSimilarityFigure(
           },
         };
 
-  const labeledNodes = selectLabeledNodes(graph.nodes, options);
+  const labeledNodes = selectLabeledNodes(visibleNodes, options, selectedNode);
   const labelTrace = {
     type: "scattergl",
     mode: "text",
@@ -172,6 +186,102 @@ export function buildSimilarityFigure(
   };
 }
 
+function filterVisibleNodes(
+  nodes: SimilarityGraphNode[],
+  visibleCategories: Set<string> | null,
+): SimilarityGraphNode[] {
+  if (visibleCategories === null) {
+    return nodes;
+  }
+
+  return nodes.filter((node) => visibleCategories.has(node.dominant_screen_category));
+}
+
+function filterVisibleEdges(
+  edges: SimilarityGraphEdge[],
+  nodesByRegionKey: Map<string, SimilarityGraphNode>,
+  visibleCategories: Set<string> | null,
+  selectedRegionKey: string | null,
+): SimilarityGraphEdge[] {
+  return edges.filter((edge) => {
+    const source = nodesByRegionKey.get(edge.source_region_key);
+    const target = nodesByRegionKey.get(edge.target_region_key);
+
+    if (!source || !target) {
+      return false;
+    }
+
+    if (
+      visibleCategories !== null &&
+      (!visibleCategories.has(source.dominant_screen_category) ||
+        !visibleCategories.has(target.dominant_screen_category))
+    ) {
+      return false;
+    }
+
+    if (selectedRegionKey === null) {
+      return true;
+    }
+
+    return edge.source_region_key === selectedRegionKey || edge.target_region_key === selectedRegionKey;
+  });
+}
+
+const CATEGORY_COLOR_OVERRIDES: Record<string, string> = {
+  article: "#FF9F1C",
+  banking: "#B388EB",
+  calendar: "#7B8CFF",
+  chat: "#6EC5FF",
+  code: "#FF6B6B",
+  document: "#3DDC97",
+  generic: "#00BBF9",
+  maps: "#2EC4B6",
+  news: "#F15BB5",
+  research: "#FF7F50",
+  shopping: "#F9C74F",
+  social: "#00F5D4",
+  utility: "#A0AEC0",
+  video: "#43AA8B",
+  workflow: "#90BE6D",
+};
+
+const DISTINCT_CATEGORY_PALETTE = [
+  "#6EC5FF",
+  "#3DDC97",
+  "#FF9F1C",
+  "#FF6B6B",
+  "#B388EB",
+  "#00BBF9",
+  "#F9C74F",
+  "#F15BB5",
+  "#43AA8B",
+  "#7B8CFF",
+  "#90BE6D",
+  "#FF7F50",
+  "#00F5D4",
+  "#A0AEC0",
+];
+
+function resolveCategoryColor(category: string, fallbackColor: string): string {
+  const override = CATEGORY_COLOR_OVERRIDES[category];
+  if (override) {
+    return override;
+  }
+
+  const paletteIndex = Math.abs(hashCategory(category)) % DISTINCT_CATEGORY_PALETTE.length;
+  return DISTINCT_CATEGORY_PALETTE[paletteIndex] ?? fallbackColor;
+}
+
+function hashCategory(category: string): number {
+  let hash = 0;
+
+  for (const character of category) {
+    hash = (hash * 31 + character.charCodeAt(0)) | 0;
+  }
+
+  return hash;
+}
+
 function edgeCoordinates(
   edges: SimilarityGraphEdge[],
   nodesByRegionKey: Map<string, SimilarityGraphNode>,
@@ -196,9 +306,10 @@ function edgeCoordinates(
 function selectLabeledNodes(
   nodes: SimilarityGraphNode[],
   options: SimilarityFigureOptions,
+  selectedNode: SimilarityGraphNode | null,
 ): SimilarityGraphNode[] {
   const labeledNodes = nodes.filter((node) => {
-    if (node.region_key === options.selectedRegionKey) {
+    if (selectedNode !== null && node.region_key === selectedNode.region_key) {
       return true;
     }
 

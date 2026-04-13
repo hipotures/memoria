@@ -18,9 +18,20 @@ type PlotlyClickPoint = {
 type PlotlyClickEvent = {
   points?: PlotlyClickPoint[];
 };
+type PlotlyLegendEvent = {
+  curveNumber?: unknown;
+  data?: { name?: unknown };
+};
+type PlotlyTraceState = {
+  name?: unknown;
+};
 type PlotlyStageElement = HTMLDivElement & {
-  on?: (eventName: string, handler: (event: PlotlyClickEvent) => void) => unknown;
+  on?: (
+    eventName: string,
+    handler: ((event: PlotlyClickEvent) => void) | ((event: PlotlyLegendEvent) => boolean),
+  ) => unknown;
   __memoriaSimilarityClickBound__?: boolean;
+  data?: PlotlyTraceState[];
 };
 
 export default function App() {
@@ -28,6 +39,8 @@ export default function App() {
   const mountedRef = useRef(false);
   const plotReadyRef = useRef(false);
   const activeRequestIdRef = useRef(0);
+  const graphRef = useRef<SimilarityGraphResponse | null>(null);
+  const visibleCategoriesRef = useRef<Set<string> | null>(null);
   const [graph, setGraph] = useState<SimilarityGraphResponse | null>(null);
   const [loadState, setLoadState] = useState<LoadState>("loading");
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
@@ -35,6 +48,15 @@ export default function App() {
   const [minEdgeWeightInput, setMinEdgeWeightInput] = useState("0");
   const [showLabels, setShowLabels] = useState(true);
   const [selectedRegionKey, setSelectedRegionKey] = useState<string | null>(null);
+  const [visibleCategories, setVisibleCategories] = useState<Set<string> | null>(null);
+
+  useEffect(() => {
+    graphRef.current = graph;
+  }, [graph]);
+
+  useEffect(() => {
+    visibleCategoriesRef.current = visibleCategories;
+  }, [visibleCategories]);
 
   useEffect(() => {
     mountedRef.current = true;
@@ -59,23 +81,38 @@ export default function App() {
       return;
     }
 
-    const figure = buildSimilarityFigure(graph, { showLabels, selectedRegionKey });
+    const figure = buildSimilarityFigure(graph, {
+      showLabels,
+      selectedRegionKey,
+      visibleCategories,
+    });
     const stage = stageRef.current as PlotlyStageElement;
     const renderPlot = plotReadyRef.current ? plotly.react : plotly.newPlot;
+    const renderPromise = renderPlot(stage, figure.data, figure.layout, figure.config);
+    bindPlotlyHandlers(stage);
 
-    void renderPlot(stage, figure.data, figure.layout, figure.config)
+    void renderPromise
       .then(() => {
         plotReadyRef.current = true;
-
-        if (!stage.__memoriaSimilarityClickBound__ && typeof stage.on === "function") {
-          stage.on("plotly_click", handlePlotlyClick);
-          stage.__memoriaSimilarityClickBound__ = true;
-        }
+        bindPlotlyHandlers(stage);
       })
       .catch((error: unknown) => {
         applyErrorState(error);
       });
-  }, [graph, selectedRegionKey, showLabels]);
+  }, [graph, selectedRegionKey, showLabels, visibleCategories]);
+
+  useEffect(() => {
+    if (
+      graph === null ||
+      selectedRegionKey === null ||
+      visibleCategories === null ||
+      isRegionVisible(graph, selectedRegionKey, visibleCategories)
+    ) {
+      return;
+    }
+
+    setSelectedRegionKey(null);
+  }, [graph, selectedRegionKey, visibleCategories]);
 
   const selectedNode = graph?.nodes.find((node) => node.region_key === selectedRegionKey) ?? null;
 
@@ -103,10 +140,11 @@ export default function App() {
           </div>
         </header>
 
-        <form onSubmit={handleApplyFilters}>
-          <label>
-            Min cluster size
+        <form className="similarity-controls" onSubmit={handleApplyFilters}>
+          <label className="similarity-control">
+            <span className="similarity-control__label">Min cluster size</span>
             <input
+              className="similarity-control__input"
               type="number"
               min="0"
               step="1"
@@ -116,9 +154,10 @@ export default function App() {
               }}
             />
           </label>
-          <label>
-            Min edge weight
+          <label className="similarity-control">
+            <span className="similarity-control__label">Min edge weight</span>
             <input
+              className="similarity-control__input"
               type="number"
               min="0"
               step="0.01"
@@ -128,17 +167,22 @@ export default function App() {
               }}
             />
           </label>
-          <label>
-            Show labels
-            <input
-              type="checkbox"
-              checked={showLabels}
-              onChange={(event) => {
-                setShowLabels(event.target.checked);
-              }}
-            />
+          <label className="similarity-control similarity-control--checkbox">
+            <span className="similarity-control__label">Show labels</span>
+            <span className="similarity-control__checkbox-shell">
+              <input
+                className="similarity-control__checkbox"
+                type="checkbox"
+                checked={showLabels}
+                onChange={(event) => {
+                  setShowLabels(event.target.checked);
+                }}
+              />
+            </span>
           </label>
-          <button type="submit">Apply graph filters</button>
+          <button className="similarity-controls__submit" type="submit">
+            Apply graph filters
+          </button>
         </form>
 
         <div className="similarity-stage-card__stage">
@@ -198,7 +242,11 @@ export default function App() {
   }
 
   function syncGraphState(response: SimilarityGraphResponse): void {
+    const nextVisibleCategories = new Set(response.legend.map((entry) => entry.category));
+    graphRef.current = response;
     setGraph(response);
+    visibleCategoriesRef.current = nextVisibleCategories;
+    setVisibleCategories(nextVisibleCategories);
     setLoadState("ready");
     setErrorMessage(null);
     setSelectedRegionKey(null);
@@ -208,6 +256,7 @@ export default function App() {
 
   function applyErrorState(error: unknown): void {
     setGraph(null);
+    setVisibleCategories(null);
     setSelectedRegionKey(null);
     setLoadState("error");
     setErrorMessage(
@@ -231,12 +280,45 @@ export default function App() {
     const clickedRegionKey = resolveClickedRegionKey(point);
 
     if (clickedRegionKey !== null) {
-      setSelectedRegionKey(clickedRegionKey);
+      setSelectedRegionKey((current) => (current === clickedRegionKey ? null : clickedRegionKey));
     }
+  }
+
+  function handlePlotlyLegendClick(event: PlotlyLegendEvent): boolean {
+    const category = resolveLegendCategory(event, stageRef.current as PlotlyStageElement | null);
+    if (category === null) {
+      return false;
+    }
+
+    setVisibleCategories(toggleLegendCategory(graphRef.current, visibleCategoriesRef.current, category));
+    return false;
+  }
+
+  function handlePlotlyLegendDoubleClick(event: PlotlyLegendEvent): boolean {
+    const category = resolveLegendCategory(event, stageRef.current as PlotlyStageElement | null);
+    if (category === null) {
+      return false;
+    }
+
+    setVisibleCategories(
+      isolateLegendCategory(graphRef.current, visibleCategoriesRef.current, category),
+    );
+    return false;
   }
 
   function shouldHandleRequest(requestId: number): boolean {
     return mountedRef.current && activeRequestIdRef.current === requestId;
+  }
+
+  function bindPlotlyHandlers(stage: PlotlyStageElement): void {
+    if (stage.__memoriaSimilarityClickBound__ || typeof stage.on !== "function") {
+      return;
+    }
+
+    stage.on("plotly_click", handlePlotlyClick);
+    stage.on("plotly_legendclick", handlePlotlyLegendClick);
+    stage.on("plotly_legenddoubleclick", handlePlotlyLegendDoubleClick);
+    stage.__memoriaSimilarityClickBound__ = true;
   }
 }
 
@@ -277,4 +359,74 @@ function resolveClickedRegionKey(point: PlotlyClickPoint | undefined): string | 
   }
 
   return null;
+}
+
+function resolveLegendCategory(
+  event: PlotlyLegendEvent,
+  stage: PlotlyStageElement | null,
+): string | null {
+  if (typeof event.data?.name === "string" && event.data.name.length > 0) {
+    return event.data.name;
+  }
+
+  if (typeof event.curveNumber === "number") {
+    const traceName = stage?.data?.[event.curveNumber]?.name;
+    return typeof traceName === "string" && traceName.length > 0 ? traceName : null;
+  }
+
+  return null;
+}
+
+function toggleLegendCategory(
+  graph: SimilarityGraphResponse | null,
+  currentVisibleCategories: Set<string> | null,
+  category: string,
+): Set<string> | null {
+  const allCategories = graph?.legend.map((entry) => entry.category) ?? [];
+  if (allCategories.length === 0) {
+    return currentVisibleCategories;
+  }
+
+  const nextVisibleCategories = new Set(currentVisibleCategories ?? allCategories);
+  if (nextVisibleCategories.has(category)) {
+    if (nextVisibleCategories.size === 1) {
+      return nextVisibleCategories;
+    }
+
+    nextVisibleCategories.delete(category);
+    return nextVisibleCategories;
+  }
+
+  nextVisibleCategories.add(category);
+  return nextVisibleCategories;
+}
+
+function isolateLegendCategory(
+  graph: SimilarityGraphResponse | null,
+  currentVisibleCategories: Set<string> | null,
+  category: string,
+): Set<string> | null {
+  const allCategories = graph?.legend.map((entry) => entry.category) ?? [];
+  if (allCategories.length === 0) {
+    return currentVisibleCategories;
+  }
+
+  if (
+    currentVisibleCategories !== null &&
+    currentVisibleCategories.size === 1 &&
+    currentVisibleCategories.has(category)
+  ) {
+    return new Set(allCategories);
+  }
+
+  return new Set([category]);
+}
+
+function isRegionVisible(
+  graph: SimilarityGraphResponse,
+  regionKey: string,
+  visibleCategories: Set<string>,
+): boolean {
+  const node = graph.nodes.find((entry) => entry.region_key === regionKey);
+  return node ? visibleCategories.has(node.dominant_screen_category) : false;
 }

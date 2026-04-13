@@ -8,6 +8,7 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: true,
       selectedRegionKey: null,
+      visibleCategories: null,
     });
 
     expect(figure.data[0]).toMatchObject({
@@ -22,16 +23,25 @@ describe("buildSimilarityFigure", () => {
       mode: "markers",
       name: "social",
       customdata: [["region-social", "Social cluster", 21, "social", "telegram, chat", "Telegram"]],
+      marker: {
+        color: "#00F5D4",
+      },
     });
     expect(findTrace(figure, "research")).toMatchObject({
       type: "scattergl",
       mode: "markers",
       name: "research",
+      marker: {
+        color: "#FF7F50",
+      },
     });
     expect(findTrace(figure, "utility")).toMatchObject({
       type: "scattergl",
       mode: "markers",
       name: "utility",
+      marker: {
+        color: "#A0AEC0",
+      },
     });
     expect(findTextTrace(figure)).toMatchObject({
       type: "scattergl",
@@ -63,6 +73,7 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: true,
       selectedRegionKey: "region-research",
+      visibleCategories: null,
     });
 
     const labelTrace = findTextTrace(figure);
@@ -76,6 +87,7 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: true,
       selectedRegionKey: "region-research",
+      visibleCategories: null,
     });
 
     expect(findHighlightTrace(figure)).toMatchObject({
@@ -99,6 +111,7 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: false,
       selectedRegionKey: "region-research",
+      visibleCategories: null,
     });
 
     expect(findTextTrace(figure)).toMatchObject({
@@ -113,6 +126,7 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: false,
       selectedRegionKey: null,
+      visibleCategories: null,
     });
 
     expect(findTextTrace(figure)).toMatchObject({
@@ -127,6 +141,7 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: true,
       selectedRegionKey: null,
+      visibleCategories: null,
     });
 
     expect(findTrace(figure, "social")).toMatchObject({
@@ -143,10 +158,103 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(graphFixture, {
       showLabels: true,
       selectedRegionKey: null,
+      visibleCategories: null,
     });
 
     expect(findTrace(figure, "research")).toMatchObject({
       customdata: [["region-research", "Research cluster", 17, "research", "browser, notes", "Chrome"]],
+    });
+  });
+
+  it("does not rely on backend-provided near-duplicate legend colors when frontend overrides exist", () => {
+    const figure = buildSimilarityFigure(
+      {
+        ...graphFixture,
+        legend: [
+          { category: "social", color: "#55c6cc", count: 1 },
+          { category: "document", color: "#59c8cd", count: 1 },
+        ],
+        nodes: [
+          graphFixture.nodes[0],
+          {
+            ...graphFixture.nodes[2],
+            region_key: "region-document",
+            title: "Document cluster",
+            dominant_screen_category: "document",
+          },
+        ],
+      },
+      {
+        showLabels: true,
+        selectedRegionKey: null,
+        visibleCategories: null,
+      },
+    );
+
+    expect(findTrace(figure, "social")).toMatchObject({
+      marker: { color: "#00F5D4" },
+    });
+    expect(findTrace(figure, "document")).toMatchObject({
+      marker: { color: "#3DDC97" },
+    });
+  });
+
+  it("filters nodes, edges, and labels to the currently visible legend categories", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      showLabels: true,
+      selectedRegionKey: null,
+      visibleCategories: new Set(["social", "utility"]),
+    });
+
+    expect(findTrace(figure, "social")).toMatchObject({
+      x: [0.12],
+      y: [0.44],
+      visible: true,
+    });
+    expect(findTrace(figure, "research")).toMatchObject({
+      x: [0.68],
+      y: [0.23],
+      visible: "legendonly",
+    });
+    expect(findTrace(figure, "utility")).toMatchObject({
+      x: [-0.3],
+      y: [-0.2],
+      visible: true,
+    });
+    expect(figure.data[0]).toMatchObject({
+      x: [0.12, -0.3, null],
+      y: [0.44, -0.2, null],
+    });
+    expect(findTextTrace(figure)).toMatchObject({
+      text: ["Social cluster", "Utility cluster"],
+    });
+  });
+
+  it("drops highlight and selected-only labels when the selected category is hidden", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      showLabels: false,
+      selectedRegionKey: "region-research",
+      visibleCategories: new Set(["social", "utility"]),
+    });
+
+    expect(() => findHighlightTrace(figure)).toThrow("Trace not found: selected-highlight");
+    expect(findTextTrace(figure)).toMatchObject({
+      text: [],
+      x: [],
+      y: [],
+    });
+  });
+
+  it("keeps only ego-network edges for the selected region", () => {
+    const figure = buildSimilarityFigure(graphFixture, {
+      showLabels: true,
+      selectedRegionKey: "region-social",
+      visibleCategories: new Set(["social", "research", "utility"]),
+    });
+
+    expect(figure.data[0]).toMatchObject({
+      x: [0.12, 0.68, null, 0.12, -0.3, null],
+      y: [0.44, 0.23, null, 0.44, -0.2, null],
     });
   });
 });
