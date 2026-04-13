@@ -60,8 +60,8 @@ def test_similarity_graph_endpoint_reports_graph_kind_edge_scope_and_render_labe
     nodes_by_region = {node["region_key"]: node for node in payload["nodes"]}
     assert payload["graph_kind"] == "region_similarity"
     assert payload["edge_scope"] == "atlas_snapshot"
-    assert nodes_by_region["region-social"]["label"] == "Social cluster"
-    assert nodes_by_region["region-social"]["canonical_title"] == "social cluster"
+    assert nodes_by_region["region-social"]["label"] == "Social region"
+    assert nodes_by_region["region-social"]["canonical_title"] == "social region"
     assert nodes_by_region["region-social"]["duplicate_title_count"] == 1
     assert nodes_by_region["region-social"]["degree"] == 1
     assert nodes_by_region["region-social"]["label_priority"] == 6.0
@@ -190,7 +190,7 @@ def _seed_similarity_fixture(engine: object) -> None:
                     region_key="region-social",
                     parent_region_key=None,
                     level=0,
-                    title="Social cluster",
+                    title="Social region",
                     x=0.1,
                     y=0.2,
                     label_x=0.16,
@@ -215,7 +215,7 @@ def _seed_similarity_fixture(engine: object) -> None:
                     region_key="region-finance",
                     parent_region_key=None,
                     level=0,
-                    title="Finance cluster",
+                    title="Finance region",
                     x=0.7,
                     y=0.4,
                     label_x=0.74,

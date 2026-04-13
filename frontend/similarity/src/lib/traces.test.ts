@@ -19,7 +19,7 @@ describe("buildSimilarityFigure", () => {
       mode: "markers",
       name: "social",
       customdata: [
-        ["region-social", "Social cluster", 21, "social", "live streaming, creator tools", "TikTok"],
+        ["region-social", "Social region", 21, "social", "live streaming, creator tools", "TikTok"],
       ],
       marker: {
         color: "#00F5D4",
@@ -166,7 +166,7 @@ describe("buildSimilarityFigure", () => {
     const figure = buildSimilarityFigure(legacyGraphFixture, legacyFigureOptions(true));
 
     expect(findTextTrace(figure)).toMatchObject({
-      text: ["Social cluster", "Utility cluster"],
+      text: ["Social region", "Utility region"],
       x: [0.12, -0.3],
       y: [0.44, -0.2],
     });
@@ -194,9 +194,9 @@ describe("buildSimilarityFigure", () => {
       nodes: Array.from({ length: 25 }, (_, index) => ({
         ...graphFixture.nodes[0],
         region_key: `region-${index}`,
-        title: `Cluster ${index}`,
+        title: `Region ${index}`,
         label: `label ${String(index).padStart(2, "0")}`,
-        canonical_title: `Cluster ${index}`,
+        canonical_title: `region ${index}`,
         x: index,
         y: index * -1,
         label_x: index + 0.5,
@@ -237,7 +237,7 @@ describe("buildSimilarityFigure", () => {
       customdata: [
         [
           "region-research",
-          "Research cluster",
+          "Research region",
           17,
           "research",
           "dns management, workspace docs",
@@ -260,7 +260,7 @@ describe("buildSimilarityFigure", () => {
           {
             ...graphFixture.nodes[2],
             region_key: "region-document",
-            title: "Document cluster",
+            title: "Document region",
             dominant_screen_category: "document",
           },
         ],
@@ -367,9 +367,9 @@ const graphFixture = {
   nodes: [
     {
       region_key: "region-social",
-      title: "Social cluster",
+      title: "Social region",
       label: "tiktok · live streaming",
-      canonical_title: "Social cluster",
+      canonical_title: "social region",
       duplicate_title_count: 1,
       x: 0.12,
       y: 0.44,
@@ -388,9 +388,9 @@ const graphFixture = {
     },
     {
       region_key: "region-research",
-      title: "Research cluster",
+      title: "Research region",
       label: "chrome · dns management",
-      canonical_title: "Research cluster",
+      canonical_title: "research region",
       duplicate_title_count: 1,
       x: 0.68,
       y: 0.23,
@@ -409,9 +409,9 @@ const graphFixture = {
     },
     {
       region_key: "region-utility",
-      title: "Utility cluster",
+      title: "Utility region",
       label: "settings · battery saver",
-      canonical_title: "Utility cluster",
+      canonical_title: "utility region",
       duplicate_title_count: 1,
       x: -0.3,
       y: -0.2,
@@ -430,9 +430,9 @@ const graphFixture = {
     },
     {
       region_key: "region-workflow",
-      title: "Workflow cluster",
+      title: "Workflow region",
       label: "automation · review queue",
-      canonical_title: "Workflow cluster",
+      canonical_title: "workflow region",
       duplicate_title_count: 1,
       x: 1.05,
       y: -0.05,

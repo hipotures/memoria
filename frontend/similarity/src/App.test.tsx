@@ -101,7 +101,7 @@ describe("App", () => {
       plotlyClickHandler?.({
         points: [
           {
-            customdata: ["region-a", "Research cluster", 17, "research"],
+            customdata: ["region-a", "Research region", 17, "research"],
             data: { name: "social" },
             pointNumber: 99,
           },
@@ -142,7 +142,7 @@ describe("App", () => {
       plotlyClickHandler?.({
         points: [
           {
-            customdata: ["region-a", "Research cluster", 17, "research"],
+            customdata: ["region-a", "Research region", 17, "research"],
             data: { name: "research" },
             pointNumber: 0,
           },
@@ -204,7 +204,7 @@ describe("App", () => {
       plotlyClickHandler?.({
         points: [
           {
-            customdata: ["region-a", "Research cluster", 17, "research"],
+            customdata: ["region-a", "Research region", 17, "research"],
             data: { name: "research" },
             pointNumber: 0,
           },
@@ -212,7 +212,7 @@ describe("App", () => {
       });
     });
 
-    await waitForText(container, "Selected region: Research cluster");
+    await waitForText(container, "Selected region: Research region");
     const baselinePlotUpdates = reactMock.mock.calls.length;
 
     act(() => {
@@ -592,9 +592,9 @@ function buildGraphPayload(options?: {
     nodes: [
       {
         region_key: "region-b",
-        title: "Social cluster",
+        title: "Social region",
         label: "telegram · chat reply",
-        canonical_title: "Social cluster",
+        canonical_title: "social region",
         duplicate_title_count: 1,
         x: 0.12,
         y: 0.44,
@@ -612,9 +612,9 @@ function buildGraphPayload(options?: {
       },
       {
         region_key: "region-a",
-        title: "Research cluster",
+        title: "Research region",
         label: "chrome · dns management",
-        canonical_title: "Research cluster",
+        canonical_title: "research region",
         duplicate_title_count: 1,
         x: 0.68,
         y: 0.23,
