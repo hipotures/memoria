@@ -445,7 +445,7 @@ def _decorate_similarity_nodes(
             top_labels=node.top_labels,
             top_apps=node.top_apps,
             top_entities=node.top_entities,
-            is_labeled=bool(labels_by_region[node.region_key].strip() or node.title.strip()),
+            is_labeled=bool(node.title.strip()),
             representative_source_item_ids=node.representative_source_item_ids,
         )
         for node in raw_nodes
@@ -497,17 +497,10 @@ def _build_node_labels(
                 unresolved.pop(region_key)
 
         for region_key, node in sorted(unresolved.items()):
-            base_label = _label_candidate(node, candidate_index=2) or _display_title(
+            labels[region_key] = _label_candidate(node, candidate_index=2) or _display_title(
                 node.title,
                 node.region_key,
             )
-            final_label = _unique_tiebreak_label(
-                base_label=base_label,
-                region_key=node.region_key,
-                used_labels=used_labels,
-            )
-            labels[region_key] = final_label
-            used_labels.add(final_label)
 
     return _ensure_globally_unique_labels(raw_nodes=raw_nodes, candidate_labels=labels)
 
@@ -600,15 +593,8 @@ def _label_candidate(
     return None
 
 
-def _unique_tiebreak_label(*, base_label: str, region_key: str, used_labels: set[str]) -> str:
-    candidate = base_label
-    if candidate not in used_labels:
-        return candidate
-
-    candidate = f"{base_label} · {region_key}"
-    while candidate in used_labels:
-        candidate = f"{candidate} · {region_key}"
-    return candidate
+def _clean_region_key_label(node: _RawSimilarityGraphNode) -> str:
+    return f"{_display_title(node.title, node.region_key)} · {node.region_key}"
 
 
 def _ensure_globally_unique_labels(
@@ -621,15 +607,34 @@ def _ensure_globally_unique_labels(
 
     for node in raw_nodes:
         base_label = candidate_labels.get(node.region_key, _display_title(node.title, node.region_key))
-        final_label = _unique_tiebreak_label(
-            base_label=base_label,
-            region_key=node.region_key,
+        final_label = _make_globally_unique_label(
+            preferred_label=base_label,
+            clean_fallback_label=_clean_region_key_label(node),
             used_labels=used_labels,
         )
         unique_labels[node.region_key] = final_label
         used_labels.add(final_label)
 
     return unique_labels
+
+
+def _make_globally_unique_label(
+    *,
+    preferred_label: str,
+    clean_fallback_label: str,
+    used_labels: set[str],
+) -> str:
+    if preferred_label not in used_labels:
+        return preferred_label
+    if clean_fallback_label not in used_labels:
+        return clean_fallback_label
+
+    suffix = 2
+    while True:
+        candidate = f"{clean_fallback_label} #{suffix}"
+        if candidate not in used_labels:
+            return candidate
+        suffix += 1
 
 
 def _label_values_for_item(row: AtlasItem) -> list[str]:

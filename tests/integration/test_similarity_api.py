@@ -57,13 +57,18 @@ def test_similarity_graph_endpoint_reports_graph_kind_edge_scope_and_render_labe
 
     assert response.status_code == 200
     payload = response.json()
+    nodes_by_region = {node["region_key"]: node for node in payload["nodes"]}
     assert payload["graph_kind"] == "region_similarity"
     assert payload["edge_scope"] == "atlas_snapshot"
-    assert payload["nodes"][0]["label"]
-    assert payload["nodes"][0]["is_labeled"] is True
-    assert payload["nodes"][0]["label_x"] != payload["nodes"][0]["x"] or payload["nodes"][0][
-        "label_y"
-    ] != payload["nodes"][0]["y"]
+    assert nodes_by_region["region-social"]["label"] == "Social cluster"
+    assert nodes_by_region["region-social"]["canonical_title"] == "social cluster"
+    assert nodes_by_region["region-social"]["duplicate_title_count"] == 1
+    assert nodes_by_region["region-social"]["degree"] == 1
+    assert nodes_by_region["region-social"]["label_priority"] == 6.0
+    assert nodes_by_region["region-social"]["is_labeled"] is True
+    assert nodes_by_region["region-social"]["label_x"] != nodes_by_region["region-social"]["x"] or (
+        nodes_by_region["region-social"]["label_y"] != nodes_by_region["region-social"]["y"]
+    )
     assert payload["edges"][0]["edge_type"] == "semantic_similarity"
     assert payload["edges"][0]["reason"] == "semantic_similarity"
 

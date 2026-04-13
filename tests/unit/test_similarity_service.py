@@ -134,7 +134,21 @@ def test_similarity_graph_guarantees_unique_labels_after_suffix_collision() -> N
     assert len(duplicate_nodes) == 2
     assert len(set(labels_by_region.values())) == 2
     assert labels_by_region["alpha-xyz123"] == "Chrome · xyz123"
-    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 · bravo-xyz123 · bravo-xyz123"
+    assert labels_by_region["bravo-xyz123"] == "Chrome · bravo-xyz123 #2"
+
+
+def test_similarity_graph_keeps_legacy_is_labeled_semantics_for_blank_titles() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture_with_blank_title(session)
+        graph = get_similarity_graph(session)
+
+    node = graph.nodes[0]
+    assert node.title == ""
+    assert node.label == "region-blank"
+    assert node.is_labeled is False
 
 
 def test_build_similarity_graph_honors_explicit_zero_threshold_overrides() -> None:
@@ -319,7 +333,7 @@ def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Sessi
                 region_key="aardvark-preexisting",
                 parent_region_key=None,
                 level=0,
-                title="Chrome · xyz123 · bravo-xyz123",
+                title="Chrome · bravo-xyz123",
                 x=0.0,
                 y=0.0,
                 label_x=0.02,
@@ -435,6 +449,62 @@ def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Sessi
         app_hint="",
         semantic_summary="chrome tab bravo duplicate",
         object_refs=["topic:chrome", "entity:bob"],
+    )
+    session.commit()
+
+
+def _seed_similarity_fixture_with_blank_title(session: Session) -> None:
+    atlas_run = AtlasRun(
+        atlas_key="screenshots_atlas_v1",
+        source_family="screenshot",
+        status="completed",
+        source_count=1,
+        embedding_type="dense",
+        embedding_model="test-model",
+        embedding_version="1",
+        clustering_method="test-clustering",
+        clustering_params_json=json.dumps({"k": 1}),
+        random_seed=42,
+        layout_version="atlas-world-v1",
+        created_at=datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 4, 12, 9, 5, tzinfo=UTC),
+        published_at=datetime(2026, 4, 12, 9, 10, tzinfo=UTC),
+    )
+    session.add(atlas_run)
+    session.flush()
+
+    session.add(
+        AtlasRegion(
+            atlas_run_id=atlas_run.id,
+            region_key="region-blank",
+            parent_region_key=None,
+            level=0,
+            title="",
+            x=0.1,
+            y=0.2,
+            label_x=0.12,
+            label_y=0.24,
+            region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+            item_count=1,
+            top_labels_json=json.dumps([]),
+            top_apps_json=json.dumps([]),
+            top_people_json=json.dumps([]),
+            top_entities_json=json.dumps([]),
+            representatives_json=json.dumps([{"rank": 1, "source_item_id": 601}]),
+            bridge_neighbors_json=json.dumps([]),
+            cohesion_score=0.5,
+        )
+    )
+
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=601,
+        region_key="region-blank",
+        screen_category="notes",
+        app_hint="",
+        semantic_summary="blank title sample",
+        object_refs=[],
     )
     session.commit()
 
