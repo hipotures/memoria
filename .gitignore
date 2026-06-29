@@ -1,6 +1,11 @@
+# Environment
 .env
+.env.local
+
+# Python
 .venv/
 .pytest_cache/
+.ruff_cache/
 __pycache__/
 *.pyc
 
@@ -15,6 +20,7 @@ var/
 *.sqlite
 *.sqlite*
 
-# Frontend atlas workspace outputs
-frontend/atlas/node_modules/
-frontend/atlas/dist/
+# Frontend workspace outputs
+frontend/*/node_modules/
+frontend/*/dist/
+frontend/*/.vite/
