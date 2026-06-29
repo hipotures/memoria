@@ -88,23 +88,14 @@ export function EvidenceList({
       width: 0,
       height: 360,
     },
-    estimateSize: (index) => {
-      const row = rows[index];
-      if (row?.kind === "section") {
-        return 48;
-      }
-      if (row?.kind === "pager") {
-        return 80;
-      }
-      return 92;
-    },
+    estimateSize: (index) => estimateEvidenceRowSize(rows[index]),
     overscan: 6,
   });
-  const useTestRender = import.meta.env.MODE === "test";
+  const usePlainRender = import.meta.env.MODE === "test";
 
   return (
     <div className="evidence-list">
-      {useTestRender ? (
+      {usePlainRender ? (
         <div className="evidence-list__plain">
           {rows.map((row) => (
             <EvidenceRowView
@@ -134,6 +125,8 @@ export function EvidenceList({
               return (
                 <div
                   key={row.id}
+                  data-index={virtualRow.index}
+                  ref={virtualizer.measureElement}
                   className="evidence-list__row"
                   style={{ transform: `translateY(${virtualRow.start}px)` }}
                 >
@@ -154,6 +147,16 @@ export function EvidenceList({
       )}
     </div>
   );
+}
+
+export function estimateEvidenceRowSize(row: Pick<EvidenceRow, "kind"> | undefined): number {
+  if (row?.kind === "section") {
+    return 48;
+  }
+  if (row?.kind === "pager") {
+    return 80;
+  }
+  return 164;
 }
 
 function EvidenceRowView({

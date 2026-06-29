@@ -22,10 +22,17 @@ import {
 import { InsightDock } from "./components/InsightDock";
 import { RegionNavigator } from "./components/RegionNavigator";
 import {
+  applyOverviewScope,
+  applyRegionFocusScope,
   applyOverlayFilter,
+  DEFAULT_ATLAS_REGION_FOCUS_SCOPE,
+  DEFAULT_ATLAS_OVERVIEW_SCOPE,
+  type AtlasRegionFocusScope,
+  type AtlasOverviewScope,
   inputDateFromIso,
   isFocusWindowActive,
   regionSetHasMatches,
+  resolveCanvasSubregions,
   titleCaseAtlasValue,
   toEndOfDayIso,
   toStartOfDayIso,
@@ -50,6 +57,12 @@ export default function App() {
   const [toolbarDraft, setToolbarDraft] = useState<AtlasToolbarDraft>(INITIAL_TOOLBAR_DRAFT);
   const [serverFilters, setServerFilters] = useState<AtlasFilters>(
     buildServerFilters(INITIAL_TOOLBAR_DRAFT),
+  );
+  const [overviewScope, setOverviewScope] = useState<AtlasOverviewScope>(
+    DEFAULT_ATLAS_OVERVIEW_SCOPE,
+  );
+  const [regionFocusScope, setRegionFocusScope] = useState<AtlasRegionFocusScope>(
+    DEFAULT_ATLAS_REGION_FOCUS_SCOPE,
   );
   const [evidenceSort, setEvidenceSort] = useState<AtlasEvidenceSort>(DEFAULT_EVIDENCE_SORT);
   const [longTailOffset, setLongTailOffset] = useState(0);
@@ -252,27 +265,54 @@ export default function App() {
   const backendFilteringActive = hasBackendFilters(serverFilters);
   const structuralOverviewRegions = overviewData?.regions ?? [];
   const structuralOverviewEdges = overviewData?.edges ?? [];
+  const structuralOverviewPoints = overviewData?.points ?? [];
   const structuralSubregions = activeRegionDetail?.subregions ?? [];
   const hasGeneratedSubregions = structuralSubregions.length > 0;
 
   const listedRegions = useMemo(
     () =>
-      applyOverlayFilter(
-        structuralOverviewRegions,
-        backendFilteringActive,
+      applyOverviewScope(
+        applyOverlayFilter(
+          structuralOverviewRegions,
+          backendFilteringActive,
+          atlasState.selectedRegionKey,
+        ),
+        overviewScope,
         atlasState.selectedRegionKey,
       ),
-    [atlasState.selectedRegionKey, backendFilteringActive, structuralOverviewRegions],
+    [
+      atlasState.selectedRegionKey,
+      backendFilteringActive,
+      overviewScope,
+      structuralOverviewRegions,
+    ],
   );
 
   const listedSubregions = useMemo(
     () =>
-      applyOverlayFilter(
-        structuralSubregions,
-        backendFilteringActive,
+      applyRegionFocusScope(
+        applyOverlayFilter(
+          structuralSubregions,
+          backendFilteringActive,
+          atlasState.selectedSubregionKey,
+        ),
+        regionFocusScope,
         atlasState.selectedSubregionKey,
       ),
-    [atlasState.selectedSubregionKey, backendFilteringActive, structuralSubregions],
+    [
+      atlasState.selectedSubregionKey,
+      backendFilteringActive,
+      regionFocusScope,
+      structuralSubregions,
+    ],
+  );
+  const listedOverviewPoints = useMemo(() => {
+    const visibleRegionKeys = new Set(listedRegions.map((region) => region.region_key));
+    return structuralOverviewPoints.filter((point) => visibleRegionKeys.has(point.region_key));
+  }, [listedRegions, structuralOverviewPoints]);
+  const stageSubregions = useMemo(
+    () => resolveCanvasSubregions(atlasState.level, structuralSubregions, listedSubregions),
+    [atlasState.level, listedSubregions, structuralSubregions],
   );
 
   const regionRepresentatives = activeRegionDetail?.representatives ?? [];
@@ -338,9 +378,9 @@ export default function App() {
 
   const stageRegions =
     atlasState.level === "overview"
-      ? structuralOverviewRegions
+      ? listedRegions
       : hasGeneratedSubregions
-        ? structuralSubregions
+        ? listedSubregions
         : selectedRegion !== null
           ? [selectedRegion]
           : [];
@@ -348,8 +388,9 @@ export default function App() {
     backendFilteringActive &&
     overviewState === "ready" &&
     overviewData?.atlas_run !== null &&
-    stageRegions.length > 0 &&
-    !regionSetHasMatches(stageRegions);
+    (atlasState.level === "overview"
+      ? listedRegions.length === 0
+      : stageRegions.length > 0 && !regionSetHasMatches(stageRegions));
   const canOpenRegionEvidence =
     atlasState.level === "region" &&
     activeRegionDetail !== null &&
@@ -406,7 +447,7 @@ export default function App() {
   const handleSelectSubregion = (subregionKey: string) => {
     setLongTailOffset(0);
     setEvidenceData(null);
-    dispatch({ type: "subregion.selected", subregionKey });
+    dispatch({ type: "subregion.drilled", subregionKey });
   };
 
   const handleOpenEvidence = (subregionKey?: string) => {
@@ -588,10 +629,11 @@ export default function App() {
             ((overviewData?.regions.length ?? 0) > 0 || selectedRegion !== null) ? (
               <AtlasCanvas
                 level={atlasState.level}
-                overviewRegions={structuralOverviewRegions}
+                overviewRegions={listedRegions}
+                overviewPoints={listedOverviewPoints}
                 overviewEdges={structuralOverviewEdges}
                 focusRegion={selectedRegion}
-                subregions={structuralSubregions}
+                subregions={stageSubregions}
                 evidenceItems={visibleEvidenceItems}
                 filteringActive={backendFilteringActive}
                 stageNotice={stageNotice}
@@ -618,13 +660,15 @@ export default function App() {
           hasGeneratedSubregions={hasGeneratedSubregions}
           selectedSubregion={selectedSubregion}
           selectedItem={selectedItem}
-          regionRepresentatives={regionRepresentatives}
-          regionDetailLoaded={activeRegionDetail !== null}
           evidenceSections={evidenceSections}
           evidenceSort={evidenceSort}
           currentFilters={serverFilters}
           evidenceActionLabel={evidenceActionLabel}
+          overviewScope={overviewScope}
+          regionFocusScope={regionFocusScope}
           onEvidenceSortChange={handleEvidenceSortChange}
+          onOverviewScopeChange={setOverviewScope}
+          onRegionFocusScopeChange={setRegionFocusScope}
           onSelectRegion={handleSelectRegion}
           onDrillRegion={() => handleDrillRegion()}
           onSelectSubregion={handleSelectSubregion}

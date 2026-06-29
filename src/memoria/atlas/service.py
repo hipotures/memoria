@@ -93,6 +93,21 @@ class AtlasEdgeView:
 
 
 @dataclass(frozen=True, slots=True)
+class AtlasOverviewPointView:
+    source_item_id: int
+    region_key: str
+    subregion_key: str | None
+    x: float
+    y: float
+    app_hint: str | None
+    matches_filters: bool
+    is_representative: bool
+    representative_rank: int | None
+    is_bridge: bool
+    bridge_score: float
+
+
+@dataclass(frozen=True, slots=True)
 class AtlasItemView:
     source_item_id: int
     region_key: str
@@ -132,6 +147,7 @@ class AtlasOverview:
     atlas_run: AtlasRunView | None
     regions: list[AtlasRegionView]
     edges: list[AtlasEdgeView]
+    points: list[AtlasOverviewPointView]
     active_filters: AtlasFilters
 
 
@@ -168,6 +184,7 @@ def get_atlas_overview(
             atlas_run=None,
             regions=[],
             edges=[],
+            points=[],
             active_filters=filters,
         )
 
@@ -179,10 +196,20 @@ def get_atlas_overview(
         filters=filters,
         group_by="region",
     )
+    matching_source_item_ids = _matching_source_item_ids(
+        session,
+        atlas_run_id=atlas_run.id,
+        filters=filters,
+    )
     return AtlasOverview(
         atlas_run=_atlas_run_view(atlas_run),
         regions=_attach_region_overlays(regions, overlays),
         edges=_load_edges(session, atlas_run_id=atlas_run.id, region_keys=region_keys),
+        points=_load_overview_points(
+            session,
+            atlas_run_id=atlas_run.id,
+            matching_source_item_ids=matching_source_item_ids,
+        ),
         active_filters=filters,
     )
 
@@ -426,6 +453,35 @@ def _load_edges(
     ]
 
 
+def _load_overview_points(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    matching_source_item_ids: set[int],
+) -> list[AtlasOverviewPointView]:
+    rows = session.scalars(
+        select(AtlasItem)
+        .where(AtlasItem.atlas_run_id == atlas_run_id)
+        .order_by(AtlasItem.source_item_id.asc())
+    ).all()
+    return [
+        AtlasOverviewPointView(
+            source_item_id=row.source_item_id,
+            region_key=row.region_key,
+            subregion_key=row.subregion_key,
+            x=row.x,
+            y=row.y,
+            app_hint=row.app_hint,
+            matches_filters=row.source_item_id in matching_source_item_ids,
+            is_representative=bool(row.is_representative),
+            representative_rank=row.representative_rank,
+            is_bridge=bool(row.is_bridge),
+            bridge_score=row.bridge_score,
+        )
+        for row in rows
+    ]
+
+
 def _build_region_overlays(
     session: Session,
     *,
@@ -490,6 +546,21 @@ def _attach_region_overlays(
         )
         for region in regions
     ]
+
+
+def _matching_source_item_ids(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    filters: AtlasFilters,
+) -> set[int]:
+    query = select(AtlasItem.source_item_id).where(AtlasItem.atlas_run_id == atlas_run_id)
+    query = _apply_atlas_filters(query, filters)
+    return {
+        int(source_item_id)
+        for source_item_id in session.scalars(query).all()
+        if source_item_id is not None
+    }
 
 
 def _load_items_for_source_item_ids(

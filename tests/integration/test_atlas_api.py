@@ -32,11 +32,15 @@ def test_get_atlas_overview_returns_regions_and_filter_overlays(tmp_path):
     assert payload["atlas_run"]["atlas_key"] == "screenshots_atlas_v1"
     assert payload["regions"]
     assert payload["edges"]
+    assert payload["points"]
     assert payload["active_filters"]["app_hint"] == "telegram"
 
     target_region = next(
         region for region in payload["regions"] if region["region_key"] == fixture.region_key
     )
+    matching_points = [point for point in payload["points"] if point["matches_filters"]]
+    assert matching_points
+    assert all(point["app_hint"] == "telegram" for point in matching_points)
     assert target_region["overlay"]["match_count"] == 2
     assert any(region["overlay"]["match_count"] == 0 for region in payload["regions"])
 
@@ -296,8 +300,9 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
             select(AtlasRegion)
             .where(
                 AtlasRegion.atlas_run_id == seeded.atlas_run_id,
-                AtlasRegion.region_key == "region-cluster-001",
+                AtlasRegion.level == 0,
             )
+            .order_by(AtlasRegion.item_count.desc(), AtlasRegion.region_key.asc())
         )
         finance_anchor = session.scalar(
             select(AtlasItem).where(
@@ -307,10 +312,12 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
         )
         assert primary_region is not None
         assert finance_anchor is not None
+        primary_region_key = primary_region.region_key
+        finance_region_key = finance_anchor.region_key
 
         subregion_keys = (
-            f"{primary_region.region_key}/subregion-01",
-            f"{primary_region.region_key}/subregion-02",
+            f"{primary_region_key}/subregion-01",
+            f"{primary_region_key}/subregion-02",
         )
         subregion_shape = {
             "shape_type": "polygon",
@@ -323,23 +330,26 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
             ]],
         }
 
-        existing_subregions = {
-            region.region_key
-            for region in session.scalars(
-                select(AtlasRegion).where(
-                    AtlasRegion.atlas_run_id == seeded.atlas_run_id,
-                    AtlasRegion.parent_region_key == primary_region.region_key,
-                )
-            ).all()
-        }
+        for existing_item in session.scalars(
+            select(AtlasItem).where(
+                AtlasItem.atlas_run_id == seeded.atlas_run_id,
+                AtlasItem.region_key == primary_region_key,
+            )
+        ).all():
+            existing_item.subregion_key = None
+
+        session.execute(
+            delete(AtlasRegion).where(
+                AtlasRegion.atlas_run_id == seeded.atlas_run_id,
+                AtlasRegion.parent_region_key == primary_region_key,
+            )
+        )
         for index, subregion_key in enumerate(subregion_keys, start=1):
-            if subregion_key in existing_subregions:
-                continue
             session.add(
                 AtlasRegion(
                     atlas_run_id=seeded.atlas_run_id,
                     region_key=subregion_key,
-                    parent_region_key=primary_region.region_key,
+                    parent_region_key=primary_region_key,
                     level=1,
                     title=f"Travel lane {index}",
                     x=primary_region.x,
@@ -362,7 +372,7 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
                         [
                             {
                                 "edge_type": "semantic_bridge",
-                                "region_key": finance_anchor.region_key,
+                                "region_key": finance_region_key,
                                 "weight": 2.0,
                             }
                         ],
@@ -397,7 +407,7 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
                 "representative_rank": None,
                 "is_bridge": True,
                 "bridge_type": "external_bridge",
-                "secondary_region_key": finance_anchor.region_key,
+                "secondary_region_key": finance_region_key,
                 "bridge_score": 0.81,
             },
             bridge_source_item_ids[1]: {
@@ -406,7 +416,7 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
                 "representative_rank": None,
                 "is_bridge": True,
                 "bridge_type": "external_bridge",
-                "secondary_region_key": finance_anchor.region_key,
+                "secondary_region_key": finance_region_key,
                 "bridge_score": 0.77,
             },
             long_tail_source_item_ids[0]: {
@@ -454,7 +464,7 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
                 )
             )
             assert item is not None
-            item.region_key = primary_region.region_key
+            item.region_key = primary_region_key
             item.subregion_key = role["subregion_key"]
             item.is_representative = bool(role["is_representative"])
             item.representative_rank = role["representative_rank"]
@@ -478,7 +488,7 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
             [
                 {
                     "edge_type": "semantic_bridge",
-                    "region_key": finance_anchor.region_key,
+                    "region_key": finance_region_key,
                     "weight": 2.0,
                 }
             ],
@@ -487,7 +497,7 @@ def _seed_atlas_api_fixture(engine, tmp_path) -> _AtlasApiFixture:
         session.commit()
 
     return _AtlasApiFixture(
-        region_key="region-cluster-001",
+        region_key=primary_region_key,
         subregion_keys=subregion_keys,
         representative_source_item_ids=representative_source_item_ids,
         bridge_source_item_ids=bridge_source_item_ids,

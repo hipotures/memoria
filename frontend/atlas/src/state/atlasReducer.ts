@@ -63,7 +63,10 @@ export function atlasReducer(state: AtlasState, action: AtlasAction): AtlasState
         selectedItemId: null,
       };
     case "subregion.drilled":
-      if (state.level !== "region" || state.selectedRegionKey === null) {
+      if (
+        (state.level !== "region" && state.level !== "evidence") ||
+        state.selectedRegionKey === null
+      ) {
         return state;
       }
 

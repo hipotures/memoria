@@ -1,9 +1,16 @@
+import { useEffect, useMemo, useState } from "react";
+
 import type { AtlasEvidenceSort, AtlasFilters, AtlasItem, AtlasRegion } from "../api/contracts";
 import {
+  type AtlasRegionFocusScope,
+  type AtlasOverviewScope,
+  DEFAULT_ATLAS_REGION_LIST_SORT,
+  type AtlasRegionListSort,
   formatAtlasDateRange,
   humanizeAtlasValue,
   isFocusWindowActive,
   resolveFocusPeople,
+  sortAtlasRegions,
   titleCaseAtlasValue,
 } from "../lib/atlasPresentation";
 import type { EvidenceSections } from "../lib/evidenceSections";
@@ -20,13 +27,15 @@ type InsightDockProps = {
   hasGeneratedSubregions: boolean;
   selectedSubregion: AtlasRegion | null;
   selectedItem: AtlasItem | null;
-  regionRepresentatives: AtlasItem[];
-  regionDetailLoaded: boolean;
   evidenceSections: EvidenceSections<AtlasItem> | null;
   evidenceSort: AtlasEvidenceSort;
   currentFilters: AtlasFilters;
   evidenceActionLabel: string;
+  overviewScope: AtlasOverviewScope;
+  regionFocusScope: AtlasRegionFocusScope;
   onEvidenceSortChange: (sort: AtlasEvidenceSort) => void;
+  onOverviewScopeChange: (scope: AtlasOverviewScope) => void;
+  onRegionFocusScopeChange: (scope: AtlasRegionFocusScope) => void;
   onSelectRegion: (regionKey: string) => void;
   onDrillRegion: () => void;
   onSelectSubregion: (subregionKey: string) => void;
@@ -52,13 +61,15 @@ export function InsightDock({
   hasGeneratedSubregions,
   selectedSubregion,
   selectedItem,
-  regionRepresentatives,
-  regionDetailLoaded,
   evidenceSections,
   evidenceSort,
   currentFilters,
   evidenceActionLabel,
+  overviewScope,
+  regionFocusScope,
   onEvidenceSortChange,
+  onOverviewScopeChange,
+  onRegionFocusScopeChange,
   onSelectRegion,
   onDrillRegion,
   onSelectSubregion,
@@ -73,6 +84,10 @@ export function InsightDock({
   canPreviousEvidencePage,
   canNextEvidencePage,
 }: InsightDockProps) {
+  const [regionListSort, setRegionListSort] = useState<AtlasRegionListSort>(
+    DEFAULT_ATLAS_REGION_LIST_SORT,
+  );
+  const [previewItem, setPreviewItem] = useState<AtlasItem | null>(null);
   const peopleValues = resolveFocusPeople(activeFocusRegion);
   const timeRange = formatAtlasDateRange(
     activeFocusRegion?.time_start,
@@ -88,18 +103,49 @@ export function InsightDock({
     selectedSubregion?.title ??
     selectedRegion?.title ??
     "Atlas overview";
+  const selectedScreenshotUrl = selectedItem === null ? null : screenshotImageUrl(selectedItem);
+  const previewScreenshotUrl = previewItem === null ? null : screenshotImageUrl(previewItem);
+  const orderedVisibleRegions = useMemo(
+    () => sortAtlasRegions(visibleRegions, regionListSort),
+    [regionListSort, visibleRegions],
+  );
+  const orderedVisibleSubregions = useMemo(
+    () => sortAtlasRegions(visibleSubregions, regionListSort),
+    [regionListSort, visibleSubregions],
+  );
+
+  useEffect(() => {
+    if (previewItem === null) {
+      return;
+    }
+
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setPreviewItem(null);
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [previewItem]);
+
+  const openScreenshotPreview = (item: AtlasItem) => {
+    onSelectItem(item.source_item_id);
+    setPreviewItem(item);
+  };
 
   return (
-    <aside className="insight-dock">
-      <div className="insight-dock__hero">
-        <p className="insight-dock__eyebrow">Workbench</p>
-        <h2>{dockTitle}</h2>
-        <p>
-          {loading
-            ? "Refreshing the active view."
-            : "Selection details, representative evidence, and drill actions stay pinned here while the atlas remains visible."}
-        </p>
-      </div>
+    <>
+      <aside className="insight-dock">
+        <div className="insight-dock__hero">
+          <p className="insight-dock__eyebrow">Workbench</p>
+          <h2>{dockTitle}</h2>
+          <p>
+            {loading
+              ? "Refreshing the active view."
+              : "Selection details, representative evidence, and drill actions stay pinned here while the atlas remains visible."}
+          </p>
+        </div>
 
       <section className="dock-panel">
         <header className="dock-panel__header">
@@ -158,9 +204,50 @@ export function InsightDock({
 
       <section className="dock-panel">
         <header className="dock-panel__header">
-          <h3>
-            {level === "overview" && regionDetailLoaded ? "Region lanes" : level === "overview" ? "Regions" : "Subregions"}
-          </h3>
+          <div className="dock-panel__controls">
+            <h3>
+              {level === "overview" ? "Regions" : "Subregions"}
+            </h3>
+            {level === "overview" ? (
+              <label className="dock-select-field">
+                <span>Overview scope</span>
+                <select
+                  value={overviewScope}
+                  onChange={(event) =>
+                    onOverviewScopeChange(event.target.value as AtlasOverviewScope)
+                  }
+                >
+                  <option value="condensed">Condensed</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+            ) : hasGeneratedSubregions ? (
+              <label className="dock-select-field">
+                <span>Region scope</span>
+                <select
+                  value={regionFocusScope}
+                  onChange={(event) =>
+                    onRegionFocusScopeChange(event.target.value as AtlasRegionFocusScope)
+                  }
+                >
+                  <option value="featured">Featured</option>
+                  <option value="all">All</option>
+                </select>
+              </label>
+            ) : null}
+            <label className="dock-select-field">
+              <span>Region order</span>
+              <select
+                value={regionListSort}
+                onChange={(event) => setRegionListSort(event.target.value as AtlasRegionListSort)}
+              >
+                <option value="match_count_desc">Most matching</option>
+                <option value="item_count_desc">Largest scope</option>
+                <option value="title_asc">Title A-Z</option>
+                <option value="stable_order">Stable cluster order</option>
+              </select>
+            </label>
+          </div>
           {level === "overview" ? (
             <button
               type="button"
@@ -170,7 +257,7 @@ export function InsightDock({
             >
               Enter region
             </button>
-          ) : (
+          ) : level === "region" && !hasGeneratedSubregions ? (
             <button
               type="button"
               className="atlas-button atlas-button--ghost"
@@ -179,104 +266,57 @@ export function InsightDock({
             >
               {evidenceActionLabel}
             </button>
-          )}
+          ) : null}
         </header>
 
-        {level === "overview" && regionDetailLoaded ? (
-          !hasGeneratedSubregions ? (
-            <p className="dock-empty">
-              No generated lanes for this region yet. Enter the region to inspect the whole evidence slice.
-            </p>
-          ) : visibleSubregions.length > 0 ? (
+        {level === "overview" ? (
+          <div className="dock-list-scroll">
             <ul className="dock-list">
-              {visibleSubregions.map((subregion) => (
-                <li key={subregion.region_key} className="dock-list__row">
-                  <strong className="dock-list__preview-title">{subregion.title}</strong>
-                  <span>{subregion.overlay.match_count} matching screenshots</span>
+              {orderedVisibleRegions.map((region) => (
+                <li key={region.region_key} className="dock-list__row">
+                  <button
+                    type="button"
+                    className={`dock-list__button ${
+                      region.region_key === selectedRegion?.region_key ? "dock-list__button--selected" : ""
+                    }`}
+                    onClick={() => onSelectRegion(region.region_key)}
+                  >
+                    {region.title}
+                  </button>
+                  <span>{region.overlay.match_count} matching screenshots</span>
                 </li>
               ))}
             </ul>
-          ) : (
-            <p className="dock-empty">No subregions match the current atlas request.</p>
-          )
-        ) : level === "overview" ? (
-          <ul className="dock-list">
-            {visibleRegions.map((region) => (
-              <li key={region.region_key} className="dock-list__row">
-                <button
-                  type="button"
-                  className={`dock-list__button ${
-                    region.region_key === selectedRegion?.region_key ? "dock-list__button--selected" : ""
-                  }`}
-                  onClick={() => onSelectRegion(region.region_key)}
-                >
-                  {region.title}
-                </button>
-                <span>{region.overlay.match_count} matching screenshots</span>
-              </li>
-            ))}
-          </ul>
+          </div>
         ) : !hasGeneratedSubregions ? (
           <p className="dock-empty">
             No generated lanes for this region yet. Use {evidenceActionLabel.toLowerCase()} to inspect the whole region.
           </p>
-        ) : visibleSubregions.length > 0 ? (
-          <ul className="dock-list">
-            {visibleSubregions.map((subregion) => (
-              <li key={subregion.region_key} className="dock-list__row">
-                <button
-                  type="button"
-                  className={`dock-list__button ${
-                    subregion.region_key === selectedSubregion?.region_key
-                      ? "dock-list__button--selected"
-                      : ""
-                  }`}
-                  onClick={() => onSelectSubregion(subregion.region_key)}
-                >
-                  {subregion.title}
-                </button>
-                <span>{subregion.overlay.match_count} matching screenshots</span>
-              </li>
-            ))}
-          </ul>
+        ) : orderedVisibleSubregions.length > 0 ? (
+          <div className="dock-list-scroll">
+            <ul className="dock-list">
+              {orderedVisibleSubregions.map((subregion) => (
+                <li key={subregion.region_key} className="dock-list__row">
+                  <button
+                    type="button"
+                    className={`dock-list__button ${
+                      subregion.region_key === selectedSubregion?.region_key
+                        ? "dock-list__button--selected"
+                        : ""
+                    }`}
+                    onClick={() => onSelectSubregion(subregion.region_key)}
+                  >
+                    {subregion.title}
+                  </button>
+                  <span>{subregion.overlay.match_count} matching screenshots</span>
+                </li>
+              ))}
+            </ul>
+          </div>
         ) : (
           <p className="dock-empty">No subregions match the current atlas request.</p>
         )}
       </section>
-
-      {selectedRegion !== null && regionDetailLoaded ? (
-        <section className="dock-panel">
-          <header className="dock-panel__header">
-            <h3>
-              {regionRepresentatives.length} representative screenshot
-              {regionRepresentatives.length === 1 ? "" : "s"}
-            </h3>
-          </header>
-          {regionRepresentatives.length > 0 ? (
-            <ul className="dock-representatives">
-              {regionRepresentatives.map((item) => (
-                <li key={item.source_item_id}>
-                  <button
-                    type="button"
-                    className={`dock-representatives__button ${
-                      item.source_item_id === selectedItem?.source_item_id
-                        ? "dock-representatives__button--selected"
-                        : ""
-                    }`}
-                    onClick={() => onSelectItem(item.source_item_id)}
-                  >
-                    <span>#{item.source_item_id}</span>
-                    <strong>{item.semantic_summary ?? "Untitled evidence"}</strong>
-                    <span>{item.app_hint ?? "Unknown app"}</span>
-                  </button>
-                </li>
-              ))}
-            </ul>
-          ) : (
-            <p className="dock-empty">No representative evidence matches the current request.</p>
-          )}
-        </section>
-      ) : null}
 
       {level === "evidence" && evidenceSections !== null ? (
         <section className="dock-panel dock-panel--evidence">
@@ -333,14 +373,70 @@ export function InsightDock({
             <strong>{selectedItem.semantic_summary ?? "Untitled evidence"}</strong>
             <span>{selectedItem.app_hint ?? "Unknown app"}</span>
             <span>{selectedItem.object_refs.slice(0, 3).join(" · ") || "No linked objects"}</span>
-            {selectedItem.screenshot_detail_url !== null ? (
-              <a href={selectedItem.screenshot_detail_url}>Open screenshot detail</a>
+            {selectedScreenshotUrl !== null ? (
+              <button
+                type="button"
+                className="focus-summary__image-button"
+                onClick={() => openScreenshotPreview(selectedItem)}
+              >
+                Open screenshot preview
+              </button>
             ) : null}
           </div>
         </section>
       ) : null}
     </aside>
+    {previewItem !== null && previewScreenshotUrl !== null ? (
+      <div
+        className="screenshot-preview"
+        role="dialog"
+        aria-modal="true"
+        aria-label={`Screenshot #${previewItem.source_item_id}`}
+        onClick={(event) => {
+          if (event.target === event.currentTarget) {
+            setPreviewItem(null);
+          }
+        }}
+      >
+        <div className="screenshot-preview__panel">
+          <header className="screenshot-preview__header">
+            <div>
+              <span>Screenshot #{previewItem.source_item_id}</span>
+              <strong>{previewItem.semantic_summary ?? "Screenshot preview"}</strong>
+            </div>
+            <button
+              type="button"
+              className="screenshot-preview__close"
+              onClick={() => setPreviewItem(null)}
+              aria-label="Close screenshot preview"
+            >
+              X
+            </button>
+          </header>
+          <div className="screenshot-preview__body">
+            <img
+              src={previewScreenshotUrl}
+              alt={previewItem.semantic_summary ?? `Screenshot #${previewItem.source_item_id}`}
+            />
+          </div>
+          <div className="screenshot-preview__actions">
+            <a href={previewScreenshotUrl} target="_blank" rel="noreferrer">
+              Open raw image
+            </a>
+          </div>
+        </div>
+      </div>
+    ) : null}
+    </>
   );
+}
+
+function screenshotImageUrl(item: AtlasItem): string | null {
+  if (item.screenshot_detail_url === null) {
+    return null;
+  }
+
+  return `${item.screenshot_detail_url.replace(/\/$/, "")}/blob`;
 }
 
 function Facet({ label, values }: { label: string; values: string[] }) {

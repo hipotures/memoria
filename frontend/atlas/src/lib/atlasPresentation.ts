@@ -1,4 +1,19 @@
+import type { AtlasLevel } from "../state/atlasReducer";
 import type { AtlasFilters, AtlasRegion } from "../api/contracts";
+
+export type AtlasRegionListSort =
+  | "match_count_desc"
+  | "item_count_desc"
+  | "title_asc"
+  | "stable_order";
+
+export type AtlasOverviewScope = "condensed" | "all";
+export type AtlasRegionFocusScope = "featured" | "all";
+
+export const DEFAULT_ATLAS_REGION_LIST_SORT: AtlasRegionListSort = "match_count_desc";
+export const DEFAULT_ATLAS_OVERVIEW_SCOPE: AtlasOverviewScope = "condensed";
+export const DEFAULT_ATLAS_REGION_FOCUS_SCOPE: AtlasRegionFocusScope = "featured";
+const FEATURED_SUBREGION_LIMIT = 8;
 
 export function humanizeAtlasValue(value: string): string {
   const withoutPrefix = value.includes(":") ? value.split(":").slice(1).join(":") : value;
@@ -89,6 +104,71 @@ export function regionSetHasMatches(regions: AtlasRegion[]): boolean {
   return regions.some((region) => region.overlay.match_count > 0);
 }
 
+export function applyOverviewScope(
+  regions: AtlasRegion[],
+  scope: AtlasOverviewScope,
+  selectedKey: string | null,
+): AtlasRegion[] {
+  if (scope === "all") {
+    return regions;
+  }
+
+  return regions.filter(
+    (region) => region.overlay.match_count > 1 || region.region_key === selectedKey,
+  );
+}
+
+export function applyRegionFocusScope(
+  regions: AtlasRegion[],
+  scope: AtlasRegionFocusScope,
+  selectedKey: string | null,
+): AtlasRegion[] {
+  if (scope === "all" || regions.length <= FEATURED_SUBREGION_LIMIT) {
+    return regions;
+  }
+
+  const ordered = sortAtlasRegions(regions, "match_count_desc");
+  const multiMatch = ordered.filter((region) => region.overlay.match_count > 1);
+  const featuredSource = multiMatch.length > 0 ? [...multiMatch] : [];
+  if (featuredSource.length < FEATURED_SUBREGION_LIMIT) {
+    for (const region of ordered) {
+      if (featuredSource.some((candidate) => candidate.region_key === region.region_key)) {
+        continue;
+      }
+      featuredSource.push(region);
+      if (featuredSource.length === FEATURED_SUBREGION_LIMIT) {
+        break;
+      }
+    }
+  }
+  const featuredKeys = new Set(
+    (featuredSource.length > 0 ? featuredSource : ordered)
+      .slice(0, FEATURED_SUBREGION_LIMIT)
+      .map((region) => region.region_key),
+  );
+
+  if (selectedKey !== null) {
+    featuredKeys.add(selectedKey);
+  }
+
+  return ordered.filter((region) => featuredKeys.has(region.region_key));
+}
+
+export function resolveCanvasSubregions(
+  level: AtlasLevel,
+  structuralSubregions: AtlasRegion[],
+  visibleSubregions: AtlasRegion[],
+): AtlasRegion[] {
+  return level === "overview" ? structuralSubregions : visibleSubregions;
+}
+
+export function sortAtlasRegions(
+  regions: AtlasRegion[],
+  sort: AtlasRegionListSort,
+): AtlasRegion[] {
+  return [...regions].sort((left, right) => compareAtlasRegions(left, right, sort));
+}
+
 export function isFocusWindowActive(filters: AtlasFilters, region: AtlasRegion | null): boolean {
   if (region === null) {
     return false;
@@ -114,4 +194,39 @@ function formatAtlasDate(value: string): string {
     day: "numeric",
     year: "numeric",
   }).format(new Date(value));
+}
+
+function compareAtlasRegions(
+  left: AtlasRegion,
+  right: AtlasRegion,
+  sort: AtlasRegionListSort,
+): number {
+  if (sort === "item_count_desc") {
+    return (
+      right.item_count - left.item_count ||
+      right.overlay.match_count - left.overlay.match_count ||
+      left.title.localeCompare(right.title) ||
+      left.region_key.localeCompare(right.region_key)
+    );
+  }
+
+  if (sort === "title_asc") {
+    return (
+      left.title.localeCompare(right.title) ||
+      right.overlay.match_count - left.overlay.match_count ||
+      right.item_count - left.item_count ||
+      left.region_key.localeCompare(right.region_key)
+    );
+  }
+
+  if (sort === "stable_order") {
+    return left.region_key.localeCompare(right.region_key);
+  }
+
+  return (
+    right.overlay.match_count - left.overlay.match_count ||
+    right.item_count - left.item_count ||
+    left.title.localeCompare(right.title) ||
+    left.region_key.localeCompare(right.region_key)
+  );
 }

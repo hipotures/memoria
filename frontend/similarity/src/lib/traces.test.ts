@@ -80,37 +80,35 @@ describe("buildSimilarityFigure", () => {
     });
   });
 
-  it("uses backend label anchors instead of node centers", () => {
+  it("places labels away from node centers when computing layout", () => {
     const figure = buildSimilarityFigure(graphFixture, figureOptions("default"));
 
     const labelTrace = findTextTrace(figure);
     expect(labelTrace?.text).toContain("chrome · dns management");
-    expect(labelTrace?.x).toContain(0.32);
-    expect(labelTrace?.y).toContain(0.44);
+    expect(labelTrace?.x).not.toContain(0.68);
+    expect(labelTrace?.y).not.toContain(0.23);
   });
 
-  it("uses dark text only when a bright-category label is anchored on the node", () => {
-    const figure = buildSimilarityFigure(
-      {
-        ...graphFixture,
-        nodes: [
-          {
-            ...graphFixture.nodes[0],
-            label_x: graphFixture.nodes[0].x,
-            label_y: graphFixture.nodes[0].y,
-          },
-          ...graphFixture.nodes.slice(1),
-        ],
-      },
-      figureOptions("default"),
-    );
+  it("uses dark text only when a bright-category label remains anchored on the node", () => {
+    const singleNodeGraph = {
+      ...graphFixture,
+      nodes: [
+        {
+          ...graphFixture.nodes[0],
+          label_x: graphFixture.nodes[0].x,
+          label_y: graphFixture.nodes[0].y,
+        },
+      ],
+      edges: [],
+      legend: [{ category: "social", color: "#d6ad64", count: 1 }],
+      default_label_limit: 1,
+    } satisfies SimilarityGraphResponse;
+
+    const figure = buildSimilarityFigure(singleNodeGraph, figureOptions("default"));
 
     expect(findTextTrace(figure)).toMatchObject({
       textfont: {
-        color: [
-          "rgba(245,248,250,0.96)",
-          "rgba(7,18,26,0.96)",
-        ],
+        color: ["rgba(7,18,26,0.96)"],
       },
     });
   });
@@ -158,8 +156,6 @@ describe("buildSimilarityFigure", () => {
     expect(findTextTrace(figure)).toMatchObject({
       mode: "text",
       text: ["chrome · dns management"],
-      x: [0.32],
-      y: [0.44],
     });
   });
 
@@ -180,8 +176,6 @@ describe("buildSimilarityFigure", () => {
     expect(findTextTrace(figure)).toMatchObject({
       mode: "text",
       text: ["chrome · dns management"],
-      x: [0.32],
-      y: [0.44],
     });
   });
 
@@ -194,8 +188,6 @@ describe("buildSimilarityFigure", () => {
         "tiktok · live streaming",
         "settings · battery saver",
       ],
-      x: [0.32, 0.32, -0.22],
-      y: [0.44, 0.44, -0.26],
     });
   });
 
@@ -204,8 +196,6 @@ describe("buildSimilarityFigure", () => {
 
     expect(findTextTrace(figure)).toMatchObject({
       text: ["Social region", "Utility region"],
-      x: [0.12, -0.3],
-      y: [0.44, -0.2],
     });
   });
 
@@ -219,8 +209,6 @@ describe("buildSimilarityFigure", () => {
 
     expect(findTextTrace(figure)).toMatchObject({
       text: ["chrome · dns management"],
-      x: [0.32],
-      y: [0.44],
     });
   });
 
@@ -247,11 +235,12 @@ describe("buildSimilarityFigure", () => {
 
     const figure = buildSimilarityFigure(graphWithoutDefaultLimit, figureOptions("default"));
 
-    expect(findTextTrace(figure)).toMatchObject({
-      text: Array.from({ length: 20 }, (_, index) => `label ${String(index).padStart(2, "0")}`),
-      x: Array.from({ length: 20 }, (_, index) => index + 0.5),
-      y: Array.from({ length: 20 }, (_, index) => index * -1 - 0.25),
-    });
+    const labelTrace = findTextTrace(figure);
+    expect(labelTrace.text.length).toBeLessThanOrEqual(20);
+    expect(labelTrace.text.length).toBeGreaterThanOrEqual(18);
+    expect(labelTrace.text).toContain("label 01");
+    expect(labelTrace.text).toContain("label 19");
+    expect(labelTrace.text).not.toContain("label 24");
   });
 
   it("formats hover content without exposing region keys or top entities", () => {

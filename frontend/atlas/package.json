@@ -9,6 +9,10 @@
     "test": "vitest run"
   },
   "dependencies": {
+    "@deck.gl/core": "^9.2.11",
+    "@deck.gl/extensions": "^9.2.11",
+    "@deck.gl/layers": "^9.2.11",
+    "@deck.gl/react": "^9.2.11",
     "@tanstack/react-virtual": "^3.13.12",
     "d3-scale": "^4.0.2",
     "pixi.js": "^8.10.2",

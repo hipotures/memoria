@@ -81,6 +81,20 @@ export type AtlasEdge = {
   edge_type: string;
 };
 
+export type AtlasOverviewPoint = {
+  source_item_id: number;
+  region_key: string;
+  subregion_key: string | null;
+  x: number;
+  y: number;
+  app_hint: string | null;
+  matches_filters: boolean;
+  is_representative: boolean;
+  representative_rank: number | null;
+  is_bridge: boolean;
+  bridge_score: number;
+};
+
 export type AtlasItem = {
   source_item_id: number;
   region_key: string;
@@ -117,6 +131,7 @@ export type AtlasOverviewResponse = {
   atlas_run: AtlasRun | null;
   regions: AtlasRegion[];
   edges: AtlasEdge[];
+  points: AtlasOverviewPoint[];
   active_filters: AtlasFilters;
 };
 

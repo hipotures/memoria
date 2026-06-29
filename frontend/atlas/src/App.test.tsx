@@ -51,7 +51,7 @@ describe("App", () => {
     container.remove();
   });
 
-  it("loads region workbench content on overview selection before explicit drill-down", async () => {
+  it("keeps overview region selection focused on entry before showing subregion lanes", async () => {
     await renderApp(root);
 
     await waitForText(container, "Atlas overview");
@@ -61,10 +61,11 @@ describe("App", () => {
       findButton("Travel Planning", container).click();
     });
 
-    await waitForText(container, "2 representative screenshots");
+    await waitForText(container, "Mar 1, 2026");
+    await flush();
     expect(requestPaths(fetchMock)).toEqual(["/atlas/overview", "/atlas/regions/region-travel"]);
-    expect(container.textContent).toContain("Trip research in Telegram");
-    expect(container.textContent).toContain("2 representative screenshots");
+    expect(container.textContent).not.toContain("Trip booking lane");
+    expect(container.textContent).not.toContain("representative screenshots");
     expect(container.textContent).not.toContain("Budget handoff to finance notes");
 
     act(() => {
@@ -72,20 +73,201 @@ describe("App", () => {
     });
 
     await waitForText(container, "Trip booking lane");
+    expect(container.textContent).not.toContain("representative screenshots");
+    expect(container.textContent).not.toContain("Trip research in Telegram");
     expect(requestPaths(fetchMock)).toEqual(["/atlas/overview", "/atlas/regions/region-travel"]);
 
     act(() => {
       findButton("Trip booking lane", container).click();
     });
 
+    await waitForText(container, "Evidence stack");
+    expect(container.textContent).toContain("Trip research in Telegram");
+    expect(container.textContent).toContain("Browser booking confirmation");
+    expect(container.textContent).toContain("Showing 1-4 of 4");
+
+    const firstEvidenceUrl = lastRequestUrl(fetchMock);
+    expect(firstEvidenceUrl.pathname).toBe("/atlas/evidence");
+    expect(firstEvidenceUrl.searchParams.get("subregion_key")).toBe("region-travel/subregion-1");
+
+    const evidenceRequests = requestPaths(fetchMock).filter((path) => path === "/atlas/evidence").length;
+
+    act(() => {
+      findButton("Packing lane", container).click();
+    });
+
+    await waitForRequestPathCount(fetchMock, "/atlas/evidence", evidenceRequests + 1);
     await flush();
 
-    expect(container.textContent).toContain("Trip booking lane");
-    expect(container.textContent).toContain("arrival logistics");
-    expect(container.textContent).toContain("maps");
-    expect(container.textContent).toContain("alice");
-    expect(container.textContent).toContain("Mar 2, 2026");
-    expect(findButton("Open evidence", container).disabled).toBe(false);
+    const secondEvidenceUrl = lastRequestUrl(fetchMock);
+    expect(secondEvidenceUrl.pathname).toBe("/atlas/evidence");
+    expect(secondEvidenceUrl.searchParams.get("subregion_key")).toBe("region-travel/subregion-2");
+  });
+
+  it("lets overview point clicks select the owning region in the atlas workbench", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    const travelPoint = container.querySelector(
+      'circle[data-kind="overview-point"][data-region-key="region-travel"]',
+    );
+    expect(travelPoint).not.toBeNull();
+
+    act(() => {
+      travelPoint?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    });
+
+    await waitForText(container, "Mar 1, 2026");
+    await flush();
+    expect(requestPaths(fetchMock)).toEqual(["/atlas/overview", "/atlas/regions/region-travel"]);
+    expect(container.textContent).not.toContain("Trip booking lane");
+    expect(container.textContent).not.toContain("representative screenshots");
+  });
+
+  it("opens evidence screenshots in a dismissible preview overlay", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      findButton("Travel Planning", container).click();
+    });
+
+    await waitForText(container, "Mar 1, 2026");
+
+    act(() => {
+      findButton("Enter region", container).click();
+    });
+
+    await waitForText(container, "Trip booking lane");
+
+    act(() => {
+      findButton("Trip booking lane", container).click();
+    });
+
+    await waitForText(container, "Evidence stack");
+
+    act(() => {
+      findButtonContaining("Trip research in Telegram", container).click();
+    });
+
+    await flush();
+
+    act(() => {
+      findButton("Open screenshot preview", container).click();
+    });
+
+    await waitForText(container, "Screenshot #101");
+
+    const preview = container.querySelector(".screenshot-preview");
+    const image = preview?.querySelector("img");
+    expect(image?.getAttribute("src")).toBe("/screenshots/101/blob");
+    const closeButton = container.querySelector('[aria-label="Close screenshot preview"]');
+    expect(closeButton).toBeInstanceOf(HTMLButtonElement);
+
+    act(() => {
+      (closeButton as HTMLButtonElement).click();
+    });
+
+    await flush();
+    expect(container.querySelector(".screenshot-preview")).toBeNull();
+
+    act(() => {
+      findButton("Open screenshot preview", container).click();
+    });
+
+    await waitForText(container, "Screenshot #101");
+
+    act(() => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape" }));
+    });
+
+    await flush();
+    expect(container.querySelector(".screenshot-preview")).toBeNull();
+  });
+
+  it("defaults the dock region list to matching screenshots and lets the user switch ordering", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    expect(container.querySelector(".dock-list-scroll")).not.toBeNull();
+    expect(dockListButtonLabels(container)).toEqual(["Travel Planning", "Finance Review"]);
+
+    act(() => {
+      changeSelect(findSelect("Region order", container), "title_asc");
+    });
+
+    await flush();
+
+    expect(dockListButtonLabels(container)).toEqual(["Finance Review", "Travel Planning"]);
+    expect(requestPaths(fetchMock)).toEqual(["/atlas/overview"]);
+  });
+
+  it("hides singleton overview regions by default and reveals them when switching to all", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    expect(dockListButtonLabels(container)).toEqual(["Travel Planning", "Finance Review"]);
+    expect(container.textContent).not.toContain("Residual Cluster");
+
+    act(() => {
+      changeSelect(findSelect("Overview scope", container), "all");
+    });
+
+    await flush();
+
+    expect(dockListButtonLabels(container)).toEqual([
+      "Travel Planning",
+      "Finance Review",
+      "Residual Cluster",
+    ]);
+  });
+
+  it("shows featured subregions by default in region focus and reveals the full lane list on demand", async () => {
+    await renderApp(root);
+    await waitForText(container, "Atlas overview");
+
+    act(() => {
+      findButton("Travel Planning", container).click();
+    });
+
+    await waitForText(container, "Mar 1, 2026");
+
+    act(() => {
+      findButton("Enter region", container).click();
+    });
+
+    await waitForText(container, "Trip booking lane");
+
+    expect(findSelect("Region scope", container).value).toBe("featured");
+    expect(dockListButtonLabels(container)).toEqual([
+      "Trip booking lane",
+      "Packing lane",
+      "Cafes lane",
+      "Checklists lane",
+      "Hotels lane",
+      "Tickets lane",
+      "Transit lane",
+      "Weather lane",
+    ]);
+    expect(container.textContent).not.toContain("Museum lane");
+
+    act(() => {
+      changeSelect(findSelect("Region scope", container), "all");
+    });
+
+    await flush();
+
+    expect(dockListButtonLabels(container)).toEqual([
+      "Trip booking lane",
+      "Packing lane",
+      "Cafes lane",
+      "Checklists lane",
+      "Hotels lane",
+      "Tickets lane",
+      "Transit lane",
+      "Weather lane",
+      "Museum lane",
+    ]);
   });
 
   it("keeps the atlas field visible when filters produce zero matches", async () => {
@@ -101,7 +283,7 @@ describe("App", () => {
     });
 
     await waitForText(container, "No regions match the current filters");
-    expect(container.textContent).toContain("Canvas preview unavailable in this environment.");
+    expect(container.querySelector('.atlas-stage__svg[aria-label="Semantic atlas"]')).not.toBeNull();
   });
 
   it("supports Enter drill shortcuts outside form fields without hijacking form controls", async () => {
@@ -112,7 +294,7 @@ describe("App", () => {
       findButton("Travel Planning", container).click();
     });
 
-    await waitForText(container, "2 representative screenshots");
+    await waitForText(container, "Mar 1, 2026");
 
     act(() => {
       pressEnter(findInput("Search atlas", container));
@@ -125,16 +307,10 @@ describe("App", () => {
       pressEnter(document.body);
     });
 
-    await waitForText(container, "Open evidence");
+    await waitForText(container, "Trip booking lane");
 
     act(() => {
       findButton("Trip booking lane", container).click();
-    });
-
-    await flush();
-
-    act(() => {
-      pressEnter(document.body);
     });
 
     await waitForText(container, "Evidence stack");
@@ -148,15 +324,16 @@ describe("App", () => {
       findButton("Finance Review", container).click();
     });
 
-    await waitForText(container, "1 representative screenshot");
-    expect(container.textContent).toContain("Month-end close triage");
+    await waitForText(container, "morgan");
+    expect(container.textContent).not.toContain("representative screenshot");
+    expect(container.textContent).not.toContain("Month-end close triage");
 
     act(() => {
       findButton("Enter region", container).click();
     });
 
     await waitForText(container, "No generated lanes for this region yet");
-    expect(container.textContent).toContain("Canvas preview unavailable in this environment.");
+    expect(container.querySelector('.atlas-stage__svg[aria-label="Semantic atlas"]')).not.toBeNull();
     expect(findButton("Open region evidence", container).disabled).toBe(false);
 
     act(() => {
@@ -180,7 +357,7 @@ describe("App", () => {
       findButton("Travel Planning", container).click();
     });
 
-    await waitForText(container, "2 representative screenshots");
+    await waitForText(container, "Mar 1, 2026");
 
     act(() => {
       findButton("Enter region", container).click();
@@ -192,8 +369,7 @@ describe("App", () => {
       findButton("Packing lane", container).click();
     });
 
-    await flush();
-    expect(findButton("Open evidence", container).disabled).toBe(false);
+    await waitForText(container, "Evidence stack");
 
     act(() => {
       changeInput(findInput("Search atlas", container), "prune");
@@ -203,18 +379,9 @@ describe("App", () => {
       findButton("Apply filters", container).click();
     });
 
-    await flush();
-
-    expect(findButton("Open evidence", container).disabled).toBe(true);
-
-    act(() => {
-      pressEnter(document.body);
-    });
-
-    await flush();
-
+    await waitForTextToDisappear(container, "Evidence stack");
+    expect(container.textContent).toContain("Trip booking lane");
     expect(container.textContent).not.toContain("Evidence stack");
-    expect(requestPaths(fetchMock)).not.toContain("/atlas/evidence");
   });
 
   it("sends backend search state through overview, region detail, and evidence requests", async () => {
@@ -247,7 +414,7 @@ describe("App", () => {
       findButton("Travel Planning", container).click();
     });
 
-    await waitForText(container, "Hotel confirmation thread");
+    await waitForRequestPath(fetchMock, "/atlas/regions/region-travel");
 
     const detailUrl = lastRequestUrl(fetchMock);
     expect(detailUrl.pathname).toBe("/atlas/regions/region-travel");
@@ -262,12 +429,6 @@ describe("App", () => {
 
     act(() => {
       findButton("Trip booking lane", container).click();
-    });
-
-    await flush();
-
-    act(() => {
-      findButton("Open evidence", container).click();
     });
 
     await waitForText(container, "Evidence stack");
@@ -287,7 +448,7 @@ describe("App", () => {
       findButton("Travel Planning", container).click();
     });
 
-    await waitForText(container, "2 representative screenshots");
+    await waitForText(container, "Mar 1, 2026");
     expect(container.textContent).toContain("trip to berlin");
     expect(container.textContent).toContain("Mar 1, 2026");
 
@@ -329,7 +490,7 @@ describe("App", () => {
       findButton("Travel Planning", container).click();
     });
 
-    await waitForText(container, "2 representative screenshots");
+    await waitForText(container, "Mar 1, 2026");
 
     act(() => {
       findButton("Enter region", container).click();
@@ -339,12 +500,6 @@ describe("App", () => {
 
     act(() => {
       findButton("Trip booking lane", container).click();
-    });
-
-    await flush();
-
-    act(() => {
-      findButton("Open evidence", container).click();
     });
 
     await waitForText(container, "Notes packing checklist");
@@ -386,6 +541,17 @@ async function waitForText(container: HTMLElement, text: string) {
   throw new Error(`Timed out waiting for text: ${text}`);
 }
 
+async function waitForTextToDisappear(container: HTMLElement, text: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (!container.textContent?.includes(text)) {
+      return;
+    }
+    await flush();
+  }
+
+  throw new Error(`Timed out waiting for text to disappear: ${text}`);
+}
+
 async function flush() {
   await act(async () => {
     await Promise.resolve();
@@ -400,6 +566,32 @@ function requestPaths(mock: ReturnType<typeof vi.fn>): string[] {
 function lastRequestUrl(mock: ReturnType<typeof vi.fn>): URL {
   const request = mock.mock.calls[mock.mock.calls.length - 1]?.[0] as string;
   return new URL(request, "http://localhost");
+}
+
+async function waitForRequestPath(mock: ReturnType<typeof vi.fn>, path: string) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (requestPaths(mock).includes(path)) {
+      return;
+    }
+    await flush();
+  }
+
+  throw new Error(`Timed out waiting for request path: ${path}`);
+}
+
+async function waitForRequestPathCount(
+  mock: ReturnType<typeof vi.fn>,
+  path: string,
+  expectedCount: number,
+) {
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    if (requestPaths(mock).filter((requestPath) => requestPath === path).length >= expectedCount) {
+      return;
+    }
+    await flush();
+  }
+
+  throw new Error(`Timed out waiting for ${expectedCount} requests to: ${path}`);
 }
 
 function findButton(label: string, container: HTMLElement): HTMLButtonElement {
@@ -417,6 +609,18 @@ function queryButton(label: string, container: HTMLElement): HTMLButtonElement |
     (candidate) => candidate.textContent?.trim() === label,
   );
   return button instanceof HTMLButtonElement ? button : null;
+}
+
+function findButtonContaining(label: string, container: HTMLElement): HTMLButtonElement {
+  const button = Array.from(container.querySelectorAll("button")).find(
+    (candidate) => candidate.textContent?.includes(label),
+  );
+
+  if (!(button instanceof HTMLButtonElement)) {
+    throw new Error(`Could not find button containing label: ${label}`);
+  }
+
+  return button;
 }
 
 function findInput(label: string, container: HTMLElement): HTMLInputElement {
@@ -459,6 +663,12 @@ function changeSelect(select: HTMLSelectElement, value: string) {
   const descriptor = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
   descriptor?.set?.call(select, value);
   select.dispatchEvent(new Event("change", { bubbles: true }));
+}
+
+function dockListButtonLabels(container: HTMLElement): string[] {
+  return Array.from(container.querySelectorAll(".dock-list__button")).map(
+    (button) => button.textContent?.trim() ?? "",
+  );
 }
 
 function pressEnter(target: EventTarget) {
@@ -514,6 +724,17 @@ function buildOverviewPayload(url: URL) {
         top_labels: ["budget review"],
         top_entities: ["topic:month-end-close"],
       }),
+      buildRegion({
+        region_key: "region-singleton",
+        title: "Residual Cluster",
+        x: 40,
+        y: 180,
+        overlay: { match_count: 1 },
+        item_count: 1,
+        top_apps: ["notes"],
+        top_labels: ["singleton note"],
+        top_entities: ["topic:singleton-note"],
+      }),
     ],
     edges: [
       {
@@ -522,6 +743,41 @@ function buildOverviewPayload(url: URL) {
         weight: 0.36,
         edge_type: "bridge",
       },
+    ],
+    points: [
+      buildOverviewPoint({
+        source_item_id: 101,
+        region_key: "region-travel",
+        x: -210,
+        y: 20,
+        app_hint: "telegram",
+        matches_filters: filteredMatchCount > 0,
+        is_representative: true,
+      }),
+      buildOverviewPoint({
+        source_item_id: 102,
+        region_key: "region-travel",
+        x: -150,
+        y: 80,
+        app_hint: "telegram",
+        matches_filters: filteredMatchCount > 0,
+      }),
+      buildOverviewPoint({
+        source_item_id: 201,
+        region_key: "region-finance",
+        x: 240,
+        y: -20,
+        app_hint: "slack",
+        matches_filters: !(searchQuery === "hotel" || searchQuery === "void" || searchQuery === "prune"),
+      }),
+      buildOverviewPoint({
+        source_item_id: 301,
+        region_key: "region-singleton",
+        x: 30,
+        y: 160,
+        app_hint: "notes",
+        matches_filters: false,
+      }),
     ],
     active_filters: buildActiveFilters(url),
   };
@@ -610,6 +866,90 @@ function buildRegionDetailPayload(url: URL, regionKey: string) {
             top_labels: ["packing"],
             top_apps: ["notes"],
             top_entities: ["task:review-final-checklist"],
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-3",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Museum lane",
+            x: 30,
+            y: -90,
+            overlay: { match_count: searchQuery === "hotel" || searchQuery === "void" ? 0 : 1 },
+            top_labels: ["museum tickets"],
+            top_apps: ["browser"],
+            top_entities: ["topic:museum-plan"],
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-4",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Cafes lane",
+            x: 150,
+            y: -80,
+            overlay: { match_count: 2 },
+            top_labels: ["cafes"],
+            top_apps: ["maps"],
+            top_entities: ["topic:cafes"],
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-5",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Transit lane",
+            x: 180,
+            y: 90,
+            overlay: { match_count: 2 },
+            top_labels: ["transit"],
+            top_apps: ["maps"],
+            top_entities: ["topic:transit"],
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-6",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Tickets lane",
+            x: -190,
+            y: -120,
+            overlay: { match_count: 2 },
+            top_labels: ["tickets"],
+            top_apps: ["browser"],
+            top_entities: ["topic:tickets"],
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-7",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Hotels lane",
+            x: -220,
+            y: 110,
+            overlay: { match_count: 2 },
+            top_labels: ["hotels"],
+            top_apps: ["browser"],
+            top_entities: ["topic:hotels"],
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-8",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Checklists lane",
+            x: 210,
+            y: -10,
+            overlay: { match_count: 2 },
+            top_labels: ["checklists"],
+            top_apps: ["notes"],
+            top_entities: ["topic:checklists"],
+          }),
+          buildRegion({
+            region_key: "region-travel/subregion-9",
+            parent_region_key: "region-travel",
+            level: 1,
+            title: "Weather lane",
+            x: 250,
+            y: 130,
+            overlay: { match_count: 2 },
+            top_labels: ["weather"],
+            top_apps: ["browser"],
+            top_entities: ["topic:weather"],
           }),
         ];
 
@@ -936,8 +1276,10 @@ function buildRegion(overrides: Record<string, unknown>) {
 }
 
 function buildItem(overrides: Record<string, unknown>) {
+  const sourceItemId = typeof overrides.source_item_id === "number" ? overrides.source_item_id : 1;
+
   return {
-    source_item_id: 1,
+    source_item_id: sourceItemId,
     region_key: "region-travel",
     subregion_key: "region-travel/subregion-1",
     x: 0,
@@ -952,7 +1294,24 @@ function buildItem(overrides: Record<string, unknown>) {
     bridge_type: null,
     secondary_region_key: null,
     bridge_score: 0,
-    screenshot_detail_url: "/screenshots/1",
+    screenshot_detail_url: `/screenshots/${sourceItemId}`,
+    ...overrides,
+  };
+}
+
+function buildOverviewPoint(overrides: Record<string, unknown>) {
+  return {
+    source_item_id: 1,
+    region_key: "region-travel",
+    subregion_key: null,
+    x: 0,
+    y: 0,
+    app_hint: "telegram",
+    matches_filters: true,
+    is_representative: false,
+    representative_rank: null,
+    is_bridge: false,
+    bridge_score: 0,
     ...overrides,
   };
 }
