@@ -2,9 +2,11 @@ from __future__ import annotations
 
 from datetime import datetime
 
+from sqlalchemy import Boolean
 from sqlalchemy import DateTime
 from sqlalchemy import Float
 from sqlalchemy import ForeignKey
+from sqlalchemy import ForeignKeyConstraint
 from sqlalchemy import Integer
 from sqlalchemy import String
 from sqlalchemy import Text
@@ -293,6 +295,154 @@ class SemanticMapPoint(Base):
     y: Mapped[float] = mapped_column(Float, default=0.0)
     score_json: Mapped[str] = mapped_column(Text, default="{}")
     created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
+
+
+class AtlasRun(Base):
+    __tablename__ = "atlas_runs"
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    atlas_key: Mapped[str] = mapped_column(String(120), index=True)
+    source_family: Mapped[str] = mapped_column(String(40), index=True)
+    status: Mapped[str] = mapped_column(String(40), default="completed", index=True)
+    source_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_snapshot_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    corpus_hash: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    embedding_type: Mapped[str] = mapped_column(String(120))
+    embedding_model: Mapped[str] = mapped_column(String(120))
+    embedding_version: Mapped[str] = mapped_column(String(120))
+    clustering_method: Mapped[str] = mapped_column(String(120))
+    clustering_params_json: Mapped[str] = mapped_column(Text, default="{}")
+    random_seed: Mapped[int] = mapped_column(Integer, default=42)
+    layout_version: Mapped[str] = mapped_column(String(120), default="atlas-world-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+
+
+class AtlasRegion(Base):
+    __tablename__ = "atlas_regions"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["atlas_run_id", "parent_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_regions_parent_region",
+        ),
+        UniqueConstraint("atlas_run_id", "region_key", name="uq_atlas_region_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    atlas_run_id: Mapped[int] = mapped_column(
+        ForeignKey("atlas_runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    region_key: Mapped[str] = mapped_column(String(160), index=True)
+    parent_region_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    level: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(240))
+    x: Mapped[float] = mapped_column(Float, default=0.0)
+    y: Mapped[float] = mapped_column(Float, default=0.0)
+    label_x: Mapped[float] = mapped_column(Float, default=0.0)
+    label_y: Mapped[float] = mapped_column(Float, default=0.0)
+    region_shape_json: Mapped[str] = mapped_column(Text, default="[]")
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
+    top_labels_json: Mapped[str] = mapped_column(Text, default="[]")
+    top_apps_json: Mapped[str] = mapped_column(Text, default="[]")
+    top_people_json: Mapped[str] = mapped_column(Text, default="[]")
+    top_entities_json: Mapped[str] = mapped_column(Text, default="[]")
+    time_start: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    time_end: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    representatives_json: Mapped[str] = mapped_column(Text, default="[]")
+    bridge_neighbors_json: Mapped[str] = mapped_column(Text, default="[]")
+    cohesion_score: Mapped[float] = mapped_column(Float, default=0.0)
+
+
+class AtlasItem(Base):
+    __tablename__ = "atlas_items"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["atlas_run_id", "region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_items_region",
+        ),
+        ForeignKeyConstraint(
+            ["atlas_run_id", "subregion_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_items_subregion",
+        ),
+        ForeignKeyConstraint(
+            ["atlas_run_id", "secondary_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_items_secondary_region",
+        ),
+        UniqueConstraint("atlas_run_id", "source_item_id", name="uq_atlas_item_identity"),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    atlas_run_id: Mapped[int] = mapped_column(
+        ForeignKey("atlas_runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    source_item_id: Mapped[int] = mapped_column(
+        ForeignKey("source_items.id", ondelete="CASCADE"),
+        index=True,
+    )
+    region_key: Mapped[str] = mapped_column(String(160), index=True)
+    subregion_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
+    x: Mapped[float] = mapped_column(Float, default=0.0)
+    y: Mapped[float] = mapped_column(Float, default=0.0)
+    semantic_summary: Mapped[str | None] = mapped_column(Text, nullable=True)
+    app_hint: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    connector_instance_id: Mapped[str] = mapped_column(String(120))
+    screen_category: Mapped[str] = mapped_column(String(120))
+    has_knowledge: Mapped[bool] = mapped_column(Boolean, default=False)
+    observed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
+    object_refs_json: Mapped[str] = mapped_column(Text, default="[]")
+    is_representative: Mapped[bool] = mapped_column(Boolean, default=False)
+    representative_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
+    is_bridge: Mapped[bool] = mapped_column(Boolean, default=False)
+    bridge_type: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    secondary_region_key: Mapped[str | None] = mapped_column(String(160), nullable=True)
+    bridge_score: Mapped[float] = mapped_column(Float, default=0.0)
+    screenshot_detail_url: Mapped[str | None] = mapped_column(Text, nullable=True)
+
+
+class AtlasEdge(Base):
+    __tablename__ = "atlas_edges"
+    __table_args__ = (
+        ForeignKeyConstraint(
+            ["atlas_run_id", "source_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_edges_source_region",
+        ),
+        ForeignKeyConstraint(
+            ["atlas_run_id", "target_region_key"],
+            ["atlas_regions.atlas_run_id", "atlas_regions.region_key"],
+            ondelete="CASCADE",
+            name="fk_atlas_edges_target_region",
+        ),
+        UniqueConstraint(
+            "atlas_run_id",
+            "source_region_key",
+            "target_region_key",
+            "edge_type",
+            name="uq_atlas_edge_identity",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(primary_key=True)
+    atlas_run_id: Mapped[int] = mapped_column(
+        ForeignKey("atlas_runs.id", ondelete="CASCADE"),
+        index=True,
+    )
+    source_region_key: Mapped[str] = mapped_column(String(160), index=True)
+    target_region_key: Mapped[str] = mapped_column(String(160), index=True)
+    weight: Mapped[float] = mapped_column(Float, default=0.0)
+    edge_type: Mapped[str] = mapped_column(String(64))
 
 
 class PipelineRun(Base):

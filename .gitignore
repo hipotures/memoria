@@ -1,6 +1,11 @@
+# Environment
 .env
+.env.local
+
+# Python
 .venv/
 .pytest_cache/
+.ruff_cache/
 __pycache__/
 *.pyc
 
@@ -14,3 +19,8 @@ var/
 *.db-*
 *.sqlite
 *.sqlite*
+
+# Frontend workspace outputs
+frontend/*/node_modules/
+frontend/*/dist/
+frontend/*/.vite/

@@ -11,6 +11,7 @@ from sqlalchemy import select
 from sqlalchemy.engine import Engine
 from sqlalchemy.orm import Session
 
+from memoria.atlas import projection as atlas_projection
 from memoria.domain.models import AssetInterpretation
 from memoria.domain.models import PipelineRun
 from memoria.domain.models import SourceItem
@@ -305,6 +306,10 @@ def rebuild_screenshot_derived_data(session: Session, *, force: bool = False) ->
     rebuild_semantic_map(session, source_family="screenshot")
     reconcile_pipeline_runs(session)
     return {"absorbed": absorbed, "projections_refreshed": projections}
+
+
+def rebuild_screenshot_atlas(session: Session, *, force: bool = False) -> dict[str, object]:
+    return atlas_projection.rebuild_screenshot_atlas(session, force=force)
 
 
 def _diagnose_vision_error_text(error_text: str) -> str:

@@ -226,6 +226,42 @@ The repository should evolve around the core system responsibilities:
 
 The repo should grow by adding new source modules and read/action surfaces without collapsing the distinction between canonical state, knowledge, and projections.
 
+## Semantic Atlas
+
+The semantic atlas is a persisted screenshot projection built from the latest screenshot semantic map run. Rebuild it with the admin CLI:
+
+```bash
+uv run memoria-admin --database-url "sqlite:///$PWD/data/memoria.db" rebuild-screenshot-atlas
+```
+
+The rebuild requires an existing semantic map run. It also refuses to run while screenshot pipeline runs are active unless you add `--force`.
+
+To work on the atlas frontend locally:
+
+```bash
+cd frontend/atlas
+npm run dev
+```
+
+Vite proxies `/atlas/*` requests to `http://127.0.0.1:8000` by default. Set `VITE_ATLAS_API_ORIGIN` if your API is running somewhere else.
+
+To build the frontend bundle that FastAPI serves from `frontend/atlas/dist`:
+
+```bash
+cd frontend/atlas
+npm run build
+```
+
+Once the bundle exists, FastAPI serves the app at `GET /atlas` and static assets under `/atlas/assets/*`.
+
+Atlas read APIs:
+
+- `GET /atlas/overview`
+- `GET /atlas/regions/{region_key}`
+- `GET /atlas/evidence` (`region_key` required; `subregion_key`, `sort`, `limit`, and `offset` are supported)
+
+All three atlas read endpoints accept the screenshot filter vocabulary: `connector_instance_id`, `app_hint`, `screen_category`, `has_knowledge`, `observed_from`, `observed_to`, and `search_query`.
+
 ## Development Direction
 
 The project should grow incrementally through vertical slices.

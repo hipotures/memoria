@@ -9,12 +9,14 @@ from fastapi import FastAPI
 from fastapi import HTTPException
 from sqlalchemy.orm import Session
 
+from memoria.api.atlas import create_atlas_router
 from memoria.api.knowledge import create_knowledge_router
 from memoria.api.map import create_map_router
 from memoria.api.schemas import AssistantQueryRequest
 from memoria.api.schemas import IngestScreenshotRequest
 from memoria.api.screenshots import create_screenshot_router
 from memoria.api.search import create_search_router
+from memoria.api.similarity import create_similarity_router
 from memoria.assistant.service import answer_question
 from memoria.domain.models import AssetInterpretation
 from memoria.ocr.engines import OcrEngine
@@ -37,12 +39,15 @@ def create_app(
     *,
     database_url: str | None = None,
     blob_dir: Path,
+    atlas_frontend_dist_dir: Path | None = None,
+    similarity_frontend_dist_dir: Path | None = None,
     runtime_settings: RuntimeSettings | None = None,
     ocr_engine: OcrEngine | None = None,
     vision_engine: VisionEngine | None = None,
 ) -> FastAPI:
     settings = runtime_settings or load_runtime_settings_from_env()
     resolved_database_url = database_url or settings.database_url
+    project_root = Path(__file__).resolve().parents[3]
     engine = create_engine_with_sqlite_pragmas(resolved_database_url)
     resolved_ocr_engine = ocr_engine or create_ocr_engine(settings)
     resolved_vision_engine = vision_engine or create_vision_engine(settings)
@@ -51,6 +56,18 @@ def create_app(
     app.include_router(create_screenshot_router(engine=engine))
     app.include_router(create_search_router(engine=engine))
     app.include_router(create_map_router(engine=engine))
+    app.include_router(
+        create_atlas_router(
+            engine=engine,
+            frontend_dist_dir=atlas_frontend_dist_dir or project_root / "frontend/atlas/dist",
+        )
+    )
+    app.include_router(
+        create_similarity_router(
+            engine=engine,
+            frontend_dist_dir=similarity_frontend_dist_dir or project_root / "frontend/similarity/dist",
+        )
+    )
 
     @app.post("/ingest", status_code=201)
     def ingest_endpoint(payload: IngestScreenshotRequest) -> dict[str, int | str]:

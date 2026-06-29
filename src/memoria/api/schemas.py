@@ -2,6 +2,7 @@ from datetime import datetime
 from typing import Any
 
 from pydantic import BaseModel
+from pydantic import Field
 
 
 class IngestScreenshotRequest(BaseModel):
@@ -286,3 +287,221 @@ class SemanticClusterItemResponse(BaseModel):
 class SemanticClusterItemsResponse(BaseModel):
     cluster_key: str
     items: list[SemanticClusterItemResponse]
+
+
+class ScreenshotReadFiltersResponse(BaseModel):
+    connector_instance_id: str | None
+    app_hint: str | None
+    screen_category: str | None
+    has_knowledge: bool | None
+    observed_from: datetime | None
+    observed_to: datetime | None
+
+
+class AtlasFiltersResponse(BaseModel):
+    connector_instance_id: str | None
+    app_hint: str | None
+    screen_category: str | None
+    has_knowledge: bool | None
+    observed_from: datetime | None
+    observed_to: datetime | None
+    search_query: str | None
+
+
+class AtlasRunResponse(BaseModel):
+    atlas_run_id: int
+    atlas_key: str
+    status: str
+    source_count: int
+    source_snapshot_id: str | None
+    corpus_hash: str | None
+    embedding_type: str
+    embedding_model: str
+    embedding_version: str
+    clustering_method: str
+    clustering_params: dict[str, Any]
+    random_seed: int
+    layout_version: str
+    generated_at: datetime
+    completed_at: datetime | None
+    published_at: datetime | None
+
+
+class AtlasOverlayResponse(BaseModel):
+    match_count: int
+
+
+class AtlasRepresentativeRefResponse(BaseModel):
+    rank: int
+    source_item_id: int
+
+
+class AtlasBridgeNeighborResponse(BaseModel):
+    edge_type: str
+    region_key: str
+    weight: float
+
+
+class AtlasRegionResponse(BaseModel):
+    atlas_run_id: int
+    region_key: str
+    parent_region_key: str | None
+    level: int
+    title: str
+    x: float
+    y: float
+    label_x: float
+    label_y: float
+    region_shape: dict[str, Any]
+    item_count: int
+    top_labels: list[str]
+    top_apps: list[str]
+    top_people: list[str]
+    top_entities: list[str]
+    time_start: datetime | None
+    time_end: datetime | None
+    representatives: list[AtlasRepresentativeRefResponse]
+    bridge_neighbors: list[AtlasBridgeNeighborResponse]
+    cohesion_score: float
+    overlay: AtlasOverlayResponse
+
+
+class AtlasEdgeResponse(BaseModel):
+    source_region_key: str
+    target_region_key: str
+    weight: float
+    edge_type: str
+
+
+class AtlasOverviewPointResponse(BaseModel):
+    source_item_id: int
+    region_key: str
+    subregion_key: str | None
+    x: float
+    y: float
+    app_hint: str | None
+    matches_filters: bool
+    is_representative: bool
+    representative_rank: int | None
+    is_bridge: bool
+    bridge_score: float
+
+
+class AtlasItemResponse(BaseModel):
+    source_item_id: int
+    region_key: str
+    subregion_key: str | None
+    x: float
+    y: float
+    semantic_summary: str | None
+    app_hint: str | None
+    observed_at: datetime | None
+    object_refs: list[str]
+    is_representative: bool
+    representative_rank: int | None
+    is_bridge: bool
+    bridge_type: str | None
+    secondary_region_key: str | None
+    bridge_score: float
+    screenshot_detail_url: str | None
+
+
+class AtlasItemPageResponse(BaseModel):
+    items: list[AtlasItemResponse]
+    limit: int
+    offset: int
+    total: int
+
+
+class AtlasEvidenceSectionTotalsResponse(BaseModel):
+    representatives: int
+    bridges: int
+    long_tail: int
+
+
+class AtlasOverviewResponse(BaseModel):
+    atlas_run: AtlasRunResponse | None
+    regions: list[AtlasRegionResponse]
+    edges: list[AtlasEdgeResponse]
+    points: list[AtlasOverviewPointResponse] = Field(default_factory=list)
+    active_filters: AtlasFiltersResponse
+
+
+class AtlasRegionDetailResponse(BaseModel):
+    atlas_run: AtlasRunResponse
+    region: AtlasRegionResponse
+    subregions: list[AtlasRegionResponse]
+    representatives: list[AtlasItemResponse]
+    active_filters: AtlasFiltersResponse
+
+
+class AtlasEvidenceSliceResponse(BaseModel):
+    atlas_run: AtlasRunResponse
+    region_key: str
+    subregion_key: str | None
+    sort: str
+    representatives: list[AtlasItemResponse]
+    bridges: list[AtlasItemResponse]
+    long_tail_page: AtlasItemPageResponse
+    section_totals: AtlasEvidenceSectionTotalsResponse
+    active_filters: AtlasFiltersResponse
+
+
+class SimilarityGraphFiltersResponse(AtlasFiltersResponse):
+    min_cluster_size: int
+    min_edge_weight: float
+
+
+class SimilarityGraphRunResponse(BaseModel):
+    atlas_run_id: int
+    atlas_key: str
+    generated_at: datetime
+    source_count: int
+
+
+class SimilarityGraphNodeResponse(BaseModel):
+    region_key: str
+    title: str
+    label: str
+    canonical_title: str
+    duplicate_title_count: int
+    x: float
+    y: float
+    label_x: float
+    label_y: float
+    size: float
+    item_count: int
+    degree: int
+    label_priority: float
+    dominant_screen_category: str
+    top_labels: list[str]
+    top_apps: list[str]
+    top_entities: list[str]
+    is_labeled: bool
+    representative_source_item_ids: list[int]
+
+
+class SimilarityGraphEdgeResponse(BaseModel):
+    source_region_key: str
+    target_region_key: str
+    weight: float
+    support: int
+    edge_type: str
+    reason: str
+
+
+class SimilarityGraphLegendEntryResponse(BaseModel):
+    category: str
+    color: str
+    count: int
+
+
+class SimilarityGraphResponse(BaseModel):
+    run: SimilarityGraphRunResponse | None
+    nodes: list[SimilarityGraphNodeResponse]
+    edges: list[SimilarityGraphEdgeResponse]
+    legend: list[SimilarityGraphLegendEntryResponse]
+    filters: SimilarityGraphFiltersResponse
+    graph_kind: str
+    edge_scope: str
+    default_label_limit: int | None = None

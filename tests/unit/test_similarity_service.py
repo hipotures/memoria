@@ -1,0 +1,795 @@
+from __future__ import annotations
+
+import json
+from datetime import datetime
+from datetime import UTC
+
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session
+
+from memoria.domain.models import AtlasEdge
+from memoria.domain.models import AtlasItem
+from memoria.domain.models import AtlasRegion
+from memoria.domain.models import AtlasRun
+from memoria.domain.models import Base
+from memoria.domain.models import Blob
+from memoria.domain.models import SourceItem
+from memoria.similarity.service import SimilarityGraphFilters
+from memoria.similarity.service import get_similarity_graph
+
+
+def test_build_similarity_graph_groups_nodes_by_category_and_filters_weak_edges() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+
+        overview = get_similarity_graph(session, min_cluster_size=2, min_edge_weight=0.3)
+
+    assert [node.region_key for node in overview.nodes] == ["region-a", "region-b"]
+    assert [node.dominant_screen_category for node in overview.nodes] == ["social", "finance"]
+    assert overview.legend[0].category == "social"
+    assert overview.legend[0].count == 1
+    assert [(edge.source_region_key, edge.target_region_key) for edge in overview.edges] == [
+        ("region-a", "region-b")
+    ]
+
+
+def test_build_similarity_graph_keeps_snapshot_metadata_when_unfiltered() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+
+        overview = get_similarity_graph(session, min_cluster_size=2, min_edge_weight=0.3)
+
+    assert [node.region_key for node in overview.nodes] == ["region-a", "region-b"]
+    assert overview.nodes[0].top_labels == ["chat", "friends", "whatsapp"]
+    assert overview.nodes[0].top_apps == ["telegram", "whatsapp"]
+    assert overview.nodes[0].top_entities == ["entity:alice", "entity:bob"]
+    assert overview.nodes[0].representative_source_item_ids == [101, 103, 102]
+
+
+def test_build_similarity_graph_applies_item_filters_to_node_selection_and_dominant_category() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+
+        overview = get_similarity_graph(
+            session,
+            filters=SimilarityGraphFilters(app_hint="telegram", min_cluster_size=2),
+        )
+
+    assert [node.region_key for node in overview.nodes] == ["region-a"]
+    assert overview.nodes[0].item_count == 2
+    assert overview.nodes[0].size > 0
+    assert overview.nodes[0].dominant_screen_category == "social"
+    assert overview.nodes[0].top_labels == ["chat", "friends"]
+    assert overview.nodes[0].top_apps == ["telegram"]
+    assert overview.nodes[0].top_entities == ["alice"]
+    assert overview.nodes[0].representative_source_item_ids == [101, 102]
+    assert overview.nodes[0].top_labels != ["chat", "friends", "whatsapp"]
+    assert overview.nodes[0].representative_source_item_ids != [101, 103, 102]
+    assert [(entry.category, entry.color, entry.count) for entry in overview.legend] == [
+        ("social", "#2EC4B6", 1)
+    ]
+    assert overview.edges == []
+
+
+def test_similarity_graph_disambiguates_duplicate_titles_and_computes_degree() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture_with_duplicate_titles(session)
+        graph = get_similarity_graph(session)
+
+    nodes = {node.region_key: node for node in graph.nodes}
+    assert nodes["region-a"].canonical_title == "chrome"
+    assert nodes["region-a"].duplicate_title_count == 2
+    assert nodes["region-a"].degree == 1
+    assert (
+        nodes["region-a"].label_priority
+        == nodes["region-a"].item_count + 3 * nodes["region-a"].degree
+    )
+    assert nodes["region-a"].label != nodes["region-b"].label
+
+
+def test_similarity_graph_keeps_snapshot_edges_under_item_filters() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+        graph = get_similarity_graph(
+            session,
+            filters=SimilarityGraphFilters(app_hint="telegram", min_cluster_size=1),
+        )
+
+    assert graph.edge_scope == "atlas_snapshot"
+    assert [(edge.source_region_key, edge.target_region_key) for edge in graph.edges] == [
+        ("region-a", "region-b")
+    ]
+
+
+def test_similarity_graph_guarantees_unique_labels_after_suffix_collision() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture_with_duplicate_title_label_collision(session)
+        graph = get_similarity_graph(session)
+
+    duplicate_nodes = [
+        node
+        for node in graph.nodes
+        if node.canonical_title == "chrome" and node.duplicate_title_count == 2
+    ]
+    labels_by_region = {node.region_key: node.label for node in duplicate_nodes}
+
+    assert len(duplicate_nodes) == 2
+    assert len(set(labels_by_region.values())) == 2
+    assert labels_by_region["alpha-xyz123"] == "Chrome · xyz123"
+    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 #2"
+
+
+def test_similarity_graph_preserves_unique_title_label_when_duplicates_collide() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture_with_unique_title_collision(session)
+        graph = get_similarity_graph(session)
+
+    labels_by_region = {node.region_key: node.label for node in graph.nodes}
+
+    assert labels_by_region["region-z"] == "Chrome · xyz123"
+    assert labels_by_region["alpha-xyz123"] == "Chrome · xyz123 #2"
+    assert labels_by_region["bravo-xyz123"] == "Chrome · xyz123 #3"
+
+
+def test_similarity_graph_keeps_legacy_is_labeled_semantics_for_blank_titles() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture_with_blank_title(session)
+        graph = get_similarity_graph(session)
+
+    node = graph.nodes[0]
+    assert node.title == ""
+    assert node.label == "region-blank"
+    assert node.is_labeled is False
+
+
+def test_build_similarity_graph_honors_explicit_zero_threshold_overrides() -> None:
+    engine = create_engine("sqlite+pysqlite:///:memory:")
+    Base.metadata.create_all(engine)
+
+    with Session(engine) as session:
+        _seed_similarity_fixture(session)
+
+        overview = get_similarity_graph(
+            session,
+            filters=SimilarityGraphFilters(min_cluster_size=5, min_edge_weight=0.8),
+            min_cluster_size=0,
+            min_edge_weight=0.0,
+        )
+
+    assert [node.region_key for node in overview.nodes] == ["region-a", "region-b", "region-c"]
+    assert overview.filters.min_cluster_size == 0
+    assert overview.filters.min_edge_weight == 0.0
+    assert [(edge.source_region_key, edge.target_region_key) for edge in overview.edges] == [
+        ("region-a", "region-b"),
+        ("region-a", "region-c"),
+    ]
+
+
+def _seed_similarity_fixture_with_duplicate_titles(session: Session) -> None:
+    atlas_run = AtlasRun(
+        atlas_key="screenshots_atlas_v1",
+        source_family="screenshot",
+        status="completed",
+        source_count=5,
+        embedding_type="dense",
+        embedding_model="test-model",
+        embedding_version="1",
+        clustering_method="test-clustering",
+        clustering_params_json=json.dumps({"k": 2}),
+        random_seed=42,
+        layout_version="atlas-world-v1",
+        created_at=datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 4, 12, 9, 5, tzinfo=UTC),
+        published_at=datetime(2026, 4, 12, 9, 10, tzinfo=UTC),
+    )
+    session.add(atlas_run)
+    session.flush()
+
+    session.add_all(
+        [
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="region-a",
+                parent_region_key=None,
+                level=0,
+                title="Chrome",
+                x=0.1,
+                y=0.2,
+                label_x=0.12,
+                label_y=0.26,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=3,
+                top_labels_json=json.dumps(["chrome"]),
+                top_apps_json=json.dumps(["telegram"]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:alice"]),
+                representatives_json=json.dumps(
+                    [
+                        {"rank": 1, "source_item_id": 101},
+                        {"rank": 2, "source_item_id": 102},
+                    ]
+                ),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.9,
+            ),
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="region-b",
+                parent_region_key=None,
+                level=0,
+                title="Chrome",
+                x=0.6,
+                y=0.4,
+                label_x=0.62,
+                label_y=0.46,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=2,
+                top_labels_json=json.dumps(["chrome"]),
+                top_apps_json=json.dumps(["sheets"]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:budget"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 201}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.8,
+            ),
+        ]
+    )
+    session.add(
+        AtlasEdge(
+            atlas_run_id=atlas_run.id,
+            source_region_key="region-a",
+            target_region_key="region-b",
+            weight=0.72,
+            edge_type="semantic_similarity",
+        )
+    )
+
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=101,
+        region_key="region-a",
+        screen_category="social",
+        app_hint="telegram",
+        semantic_summary="chrome planning tab",
+        object_refs=["topic:chrome", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=102,
+        region_key="region-a",
+        screen_category="social",
+        app_hint="telegram",
+        semantic_summary="chrome follow-up tab",
+        object_refs=["topic:chrome", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=103,
+        region_key="region-a",
+        screen_category="chat",
+        app_hint="telegram",
+        semantic_summary="chrome message draft",
+        object_refs=["topic:chrome", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=201,
+        region_key="region-b",
+        screen_category="finance",
+        app_hint="sheets",
+        semantic_summary="chrome budget tab",
+        object_refs=["topic:chrome", "entity:budget"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=202,
+        region_key="region-b",
+        screen_category="finance",
+        app_hint="sheets",
+        semantic_summary="chrome numbers tab",
+        object_refs=["topic:chrome", "entity:budget"],
+    )
+    session.commit()
+
+
+def _seed_similarity_fixture_with_duplicate_title_label_collision(session: Session) -> None:
+    atlas_run = AtlasRun(
+        atlas_key="screenshots_atlas_v1",
+        source_family="screenshot",
+        status="completed",
+        source_count=5,
+        embedding_type="dense",
+        embedding_model="test-model",
+        embedding_version="1",
+        clustering_method="test-clustering",
+        clustering_params_json=json.dumps({"k": 2}),
+        random_seed=42,
+        layout_version="atlas-world-v1",
+        created_at=datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 4, 12, 9, 5, tzinfo=UTC),
+        published_at=datetime(2026, 4, 12, 9, 10, tzinfo=UTC),
+    )
+    session.add(atlas_run)
+    session.flush()
+
+    session.add_all(
+        [
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="aardvark-preexisting",
+                parent_region_key=None,
+                level=0,
+                title="Chrome · bravo-xyz123",
+                x=0.0,
+                y=0.0,
+                label_x=0.02,
+                label_y=0.04,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=1,
+                top_labels_json=json.dumps(["preexisting"]),
+                top_apps_json=json.dumps([]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:preexisting"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 301}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.7,
+            ),
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="alpha-xyz123",
+                parent_region_key=None,
+                level=0,
+                title="Chrome",
+                x=0.1,
+                y=0.2,
+                label_x=0.12,
+                label_y=0.26,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=2,
+                top_labels_json=json.dumps(["chrome"]),
+                top_apps_json=json.dumps([]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:alice"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 401}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.9,
+            ),
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="bravo-xyz123",
+                parent_region_key=None,
+                level=0,
+                title="Chrome",
+                x=0.6,
+                y=0.4,
+                label_x=0.62,
+                label_y=0.46,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=2,
+                top_labels_json=json.dumps(["chrome"]),
+                top_apps_json=json.dumps([]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:bob"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 501}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.8,
+            ),
+        ]
+    )
+    session.add(
+        AtlasEdge(
+            atlas_run_id=atlas_run.id,
+            source_region_key="alpha-xyz123",
+            target_region_key="bravo-xyz123",
+            weight=0.72,
+            edge_type="semantic_similarity",
+        )
+    )
+
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=301,
+        region_key="aardvark-preexisting",
+        screen_category="notes",
+        app_hint="",
+        semantic_summary="preexisting label singleton",
+        object_refs=["topic:preexisting", "entity:preexisting"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=401,
+        region_key="alpha-xyz123",
+        screen_category="social",
+        app_hint="",
+        semantic_summary="chrome tab alpha",
+        object_refs=["topic:chrome", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=402,
+        region_key="alpha-xyz123",
+        screen_category="social",
+        app_hint="",
+        semantic_summary="chrome tab alpha duplicate",
+        object_refs=["topic:chrome", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=501,
+        region_key="bravo-xyz123",
+        screen_category="finance",
+        app_hint="",
+        semantic_summary="chrome tab bravo",
+        object_refs=["topic:chrome", "entity:bob"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=502,
+        region_key="bravo-xyz123",
+        screen_category="finance",
+        app_hint="",
+        semantic_summary="chrome tab bravo duplicate",
+        object_refs=["topic:chrome", "entity:bob"],
+    )
+    session.commit()
+
+
+def _seed_similarity_fixture_with_unique_title_collision(session: Session) -> None:
+    _seed_similarity_fixture_with_duplicate_title_label_collision(session)
+
+    atlas_run_id = session.query(AtlasRun.id).scalar()
+    assert atlas_run_id is not None
+
+    session.add(
+        AtlasRegion(
+            atlas_run_id=atlas_run_id,
+            region_key="region-z",
+            parent_region_key=None,
+            level=0,
+            title="Chrome · xyz123",
+            x=0.82,
+            y=0.12,
+            label_x=0.86,
+            label_y=0.16,
+            region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+            item_count=1,
+            top_labels_json=json.dumps(["prefilled"]),
+            top_apps_json=json.dumps([]),
+            top_people_json=json.dumps([]),
+            top_entities_json=json.dumps([]),
+            representatives_json=json.dumps([{"rank": 1, "source_item_id": 601}]),
+            bridge_neighbors_json=json.dumps([]),
+            cohesion_score=0.7,
+        )
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run_id,
+        source_item_id=601,
+        region_key="region-z",
+        screen_category="notes",
+        app_hint="",
+        semantic_summary="prefilled unique title region",
+        object_refs=["topic:prefilled"],
+    )
+    session.commit()
+
+
+def _seed_similarity_fixture_with_blank_title(session: Session) -> None:
+    atlas_run = AtlasRun(
+        atlas_key="screenshots_atlas_v1",
+        source_family="screenshot",
+        status="completed",
+        source_count=1,
+        embedding_type="dense",
+        embedding_model="test-model",
+        embedding_version="1",
+        clustering_method="test-clustering",
+        clustering_params_json=json.dumps({"k": 1}),
+        random_seed=42,
+        layout_version="atlas-world-v1",
+        created_at=datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 4, 12, 9, 5, tzinfo=UTC),
+        published_at=datetime(2026, 4, 12, 9, 10, tzinfo=UTC),
+    )
+    session.add(atlas_run)
+    session.flush()
+
+    session.add(
+        AtlasRegion(
+            atlas_run_id=atlas_run.id,
+            region_key="region-blank",
+            parent_region_key=None,
+            level=0,
+            title="",
+            x=0.1,
+            y=0.2,
+            label_x=0.12,
+            label_y=0.24,
+            region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+            item_count=1,
+            top_labels_json=json.dumps([]),
+            top_apps_json=json.dumps([]),
+            top_people_json=json.dumps([]),
+            top_entities_json=json.dumps([]),
+            representatives_json=json.dumps([{"rank": 1, "source_item_id": 601}]),
+            bridge_neighbors_json=json.dumps([]),
+            cohesion_score=0.5,
+        )
+    )
+
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=601,
+        region_key="region-blank",
+        screen_category="notes",
+        app_hint="",
+        semantic_summary="blank title sample",
+        object_refs=[],
+    )
+    session.commit()
+
+
+def _seed_similarity_fixture(session: Session) -> None:
+    atlas_run = AtlasRun(
+        atlas_key="screenshots_atlas_v1",
+        source_family="screenshot",
+        status="completed",
+        source_count=6,
+        embedding_type="dense",
+        embedding_model="test-model",
+        embedding_version="1",
+        clustering_method="test-clustering",
+        clustering_params_json=json.dumps({"k": 3}),
+        random_seed=42,
+        layout_version="atlas-world-v1",
+        created_at=datetime(2026, 4, 12, 9, 0, tzinfo=UTC),
+        completed_at=datetime(2026, 4, 12, 9, 5, tzinfo=UTC),
+        published_at=datetime(2026, 4, 12, 9, 10, tzinfo=UTC),
+    )
+    session.add(atlas_run)
+    session.flush()
+
+    session.add_all(
+        [
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="region-a",
+                parent_region_key=None,
+                level=0,
+                title="Social messaging",
+                x=0.1,
+                y=0.2,
+                label_x=0.1,
+                label_y=0.2,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=3,
+                top_labels_json=json.dumps(["chat", "friends", "whatsapp"]),
+                top_apps_json=json.dumps(["telegram", "whatsapp"]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:alice", "entity:bob"]),
+                representatives_json=json.dumps(
+                    [
+                        {"rank": 1, "source_item_id": 101},
+                        {"rank": 2, "source_item_id": 103},
+                        {"rank": 3, "source_item_id": 102},
+                    ]
+                ),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.9,
+            ),
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="region-b",
+                parent_region_key=None,
+                level=0,
+                title="Budget tracking",
+                x=0.6,
+                y=0.4,
+                label_x=0.6,
+                label_y=0.4,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=2,
+                top_labels_json=json.dumps(["budget"]),
+                top_apps_json=json.dumps(["sheets"]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps(["entity:budget"]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 201}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.8,
+            ),
+            AtlasRegion(
+                atlas_run_id=atlas_run.id,
+                region_key="region-c",
+                parent_region_key=None,
+                level=0,
+                title="Single note",
+                x=0.9,
+                y=0.8,
+                label_x=0.9,
+                label_y=0.8,
+                region_shape_json=json.dumps({"shape_type": "polygon", "rings": []}),
+                item_count=1,
+                top_labels_json=json.dumps(["single"]),
+                top_apps_json=json.dumps(["notes"]),
+                top_people_json=json.dumps([]),
+                top_entities_json=json.dumps([]),
+                representatives_json=json.dumps([{"rank": 1, "source_item_id": 301}]),
+                bridge_neighbors_json=json.dumps([]),
+                cohesion_score=0.7,
+            ),
+        ]
+    )
+
+    session.add_all(
+        [
+            AtlasEdge(
+                atlas_run_id=atlas_run.id,
+                source_region_key="region-a",
+                target_region_key="region-b",
+                weight=0.72,
+                edge_type="semantic_similarity",
+            ),
+            AtlasEdge(
+                atlas_run_id=atlas_run.id,
+                source_region_key="region-a",
+                target_region_key="region-c",
+                weight=0.12,
+                edge_type="semantic_similarity",
+            ),
+        ]
+    )
+
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=101,
+        region_key="region-a",
+        screen_category="social",
+        app_hint="telegram",
+        semantic_summary="chat with Alice about plans",
+        object_refs=["topic:chat", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=102,
+        region_key="region-a",
+        screen_category="social",
+        app_hint="telegram",
+        semantic_summary="friends planning thread",
+        object_refs=["topic:friends", "entity:alice"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=103,
+        region_key="region-a",
+        screen_category="chat",
+        app_hint="whatsapp",
+        semantic_summary="whatsapp follow-up with Bob",
+        object_refs=["topic:whatsapp", "entity:bob"],
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=201,
+        region_key="region-b",
+        screen_category="finance",
+        app_hint="sheets",
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=202,
+        region_key="region-b",
+        screen_category="finance",
+        app_hint="telegram",
+    )
+    _add_atlas_item(
+        session,
+        atlas_run_id=atlas_run.id,
+        source_item_id=301,
+        region_key="region-c",
+        screen_category="notes",
+        app_hint="notes",
+    )
+    session.commit()
+
+
+def _add_atlas_item(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    source_item_id: int,
+    region_key: str,
+    screen_category: str,
+    app_hint: str,
+    connector_instance_id: str = "similarity-test",
+    has_knowledge: bool = False,
+    observed_at: datetime | None = None,
+    semantic_summary: str | None = None,
+    object_refs: list[str] | None = None,
+) -> None:
+    blob = Blob(
+        sha256=f"{source_item_id:064d}",
+        media_type="image/png",
+        byte_size=64,
+        storage_kind="memory",
+        storage_uri=f"memory://{source_item_id}",
+    )
+    session.add(blob)
+    session.flush()
+
+    session.add(
+        SourceItem(
+            id=source_item_id,
+            source_type="screenshot",
+            source_family="screenshot",
+            connector_instance_id="similarity-test",
+            external_id=f"ext-{source_item_id}",
+            dedup_key=f"dedup-{source_item_id}",
+            mode="absorb",
+            status="ready",
+            blob_id=blob.id,
+        )
+    )
+    session.add(
+        AtlasItem(
+            atlas_run_id=atlas_run_id,
+            source_item_id=source_item_id,
+            region_key=region_key,
+            subregion_key=None,
+            x=0.0,
+            y=0.0,
+            semantic_summary=semantic_summary or f"summary-{source_item_id}",
+            app_hint=app_hint,
+            connector_instance_id=connector_instance_id,
+            screen_category=screen_category,
+            has_knowledge=has_knowledge,
+            observed_at=observed_at or datetime(2026, 4, 12, 8, 0, tzinfo=UTC),
+            object_refs_json=json.dumps(object_refs or []),
+            is_representative=source_item_id in {101, 102, 201, 301},
+            representative_rank=1 if source_item_id in {101, 201, 301} else 2 if source_item_id == 102 else None,
+            is_bridge=False,
+            bridge_type=None,
+            secondary_region_key=None,
+            bridge_score=0.0,
+            screenshot_detail_url=f"/screenshots/{source_item_id}",
+        )
+    )

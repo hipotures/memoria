@@ -19,6 +19,8 @@ from memoria.domain.models import SemanticMapPoint
 from memoria.domain.models import SemanticMapRun
 from memoria.domain.models import SourceItem
 from memoria.domain.models import SourcePayloadScreenshot
+from memoria.search.embeddings import EMBEDDING_DIMENSION
+from memoria.search.embeddings import EMBEDDING_MODEL_NAME
 from memoria.search.embeddings import embed_text
 
 
@@ -99,12 +101,21 @@ def rebuild_semantic_map(session: Session, *, source_family: str) -> None:
         session.delete(run)
     session.flush()
 
-    items = _load_map_items(session)
+    items, metadata = _load_map_items(session)
     map_run = SemanticMapRun(
         map_key="screenshots_semantic_v1",
         source_family=source_family,
         source_count=len(items),
-        config_json=json.dumps({"algorithm": "greedy-centroid-v1"}, sort_keys=True),
+        config_json=json.dumps(
+            {
+                "algorithm": "greedy-centroid-v1",
+                "embedding_dimension": metadata.embedding_dimension,
+                "embedding_model": metadata.embedding_model,
+                "embedding_type": metadata.embedding_type,
+                "embedding_version": metadata.embedding_version,
+            },
+            sort_keys=True,
+        ),
     )
     session.add(map_run)
     session.flush()
@@ -254,6 +265,14 @@ class _MapItem:
     vector: list[float]
 
 
+@dataclass(frozen=True, slots=True)
+class _MapSnapshotMetadata:
+    embedding_type: str
+    embedding_model: str
+    embedding_version: str
+    embedding_dimension: int
+
+
 @dataclass(slots=True)
 class _WorkingCluster:
     key: str
@@ -263,7 +282,7 @@ class _WorkingCluster:
     y: float = 0.0
 
 
-def _load_map_items(session: Session) -> list[_MapItem]:
+def _load_map_items(session: Session) -> tuple[list[_MapItem], _MapSnapshotMetadata]:
     rows = session.execute(
         select(Embedding, SourcePayloadScreenshot, AssetInterpretation, SourceItem)
         .join(SourceItem, SourceItem.id == Embedding.source_item_id)
@@ -276,6 +295,9 @@ def _load_map_items(session: Session) -> list[_MapItem]:
         )
         .order_by(SourceItem.source_observed_at.asc(), SourceItem.id.asc())
     ).all()
+    metadata = _resolve_map_snapshot_metadata(
+        [embedding_row for embedding_row, _payload_row, _interpretation_row, _source_item in rows]
+    )
 
     items: list[_MapItem] = []
     for embedding_row, payload_row, interpretation_row, source_item in rows:
@@ -291,7 +313,31 @@ def _load_map_items(session: Session) -> list[_MapItem]:
                 vector=embed_text(embedding_row.content_text),
             )
         )
-    return items
+    return items, metadata
+
+
+def _resolve_map_snapshot_metadata(embedding_rows: list[Embedding]) -> _MapSnapshotMetadata:
+    if not embedding_rows:
+        return _MapSnapshotMetadata(
+            embedding_type="screenshot_semantic_text",
+            embedding_model=EMBEDDING_MODEL_NAME,
+            embedding_version=_embedding_version_from_dimension(EMBEDDING_DIMENSION),
+            embedding_dimension=EMBEDDING_DIMENSION,
+        )
+
+    embedding_types = sorted({embedding_row.embedding_type for embedding_row in embedding_rows})
+    embedding_models = sorted({embedding_row.model_name for embedding_row in embedding_rows})
+    embedding_dimensions = sorted({embedding_row.dimension for embedding_row in embedding_rows})
+    if len(embedding_types) != 1 or len(embedding_models) != 1 or len(embedding_dimensions) != 1:
+        raise RuntimeError("semantic map rebuild requires consistent embedding metadata")
+
+    dimension = embedding_dimensions[0]
+    return _MapSnapshotMetadata(
+        embedding_type=embedding_types[0],
+        embedding_model=embedding_models[0],
+        embedding_version=_embedding_version_from_dimension(dimension),
+        embedding_dimension=dimension,
+    )
 
 
 def _cluster_items(items: list[_MapItem]) -> list[_WorkingCluster]:
@@ -417,6 +463,10 @@ def _cluster_summary(cluster: _WorkingCluster) -> dict[str, object]:
 
 def _summary_json(cluster: SemanticCluster) -> dict[str, object]:
     return json.loads(cluster.summary_json)
+
+
+def _embedding_version_from_dimension(dimension: int) -> str:
+    return f"{dimension}d-basis"
 
 
 def _load_object_refs(session: Session, *, source_item_id: int) -> list[str]:

@@ -61,3 +61,9 @@ def test_build_screenshot_filter_clauses_supports_negative_knowledge_filter() ->
 
     assert len(clauses) == 1
     assert "NOT (EXISTS" in sql or "NOT EXISTS" in sql
+
+
+def test_screenshot_read_filters_do_not_expose_atlas_search_query() -> None:
+    filters = ScreenshotReadFilters()
+
+    assert not hasattr(filters, "search_query")

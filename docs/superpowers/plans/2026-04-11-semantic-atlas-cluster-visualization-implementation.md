@@ -2,9 +2,9 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Build the first screenshot semantic atlas product: a backend atlas projection with dedicated atlas tables and read APIs, plus a React + TypeScript + PixiJS atlas/workbench UI with semantic zoom across region, subregion, and evidence levels.
+**Goal:** Build the first screenshot semantic atlas as a dedicated backend projection plus a React workbench that renders a stable, cluster-first atlas with explicit drill-down from regions to subregions to screenshot evidence.
 
-**Architecture:** Keep the current screenshot ingest, OCR, vision, absorb, and semantic map write paths intact. Add a new atlas projection layer under `src/memoria/atlas/`, persist it in dedicated `atlas_*` tables, expose read-only atlas APIs through FastAPI, and mount a separately built Vite frontend that consumes those atlas endpoints. Atlas structure is computed on the backend from the latest semantic map and screenshot semantic embeddings; the browser only renders and navigates the projection.
+**Architecture:** Keep ingest, OCR, vision, absorb, screenshots read APIs, and the existing semantic map intact. Add a new atlas projection under `src/memoria/atlas/`, persist it in dedicated `atlas_*` tables, expose read-only atlas endpoints under `/atlas/*`, and serve a separately built React + PixiJS frontend that consumes those atlas endpoints without recomputing clustering in the browser.
 
 **Tech Stack:** Python 3.13, FastAPI, SQLAlchemy 2.x, Alembic, SQLite, pytest, React, TypeScript, Vite, PixiJS v8, TanStack Virtual, Vitest, helper-only d3 modules
 
@@ -12,220 +12,109 @@
 
 ## Current Status
 
-Fresh verification before writing this plan:
+Fresh verification in the restart worktree:
 
 ```bash
 uv run pytest -v
 ```
 
-Observed at plan-writing time:
+Observed before writing this plan:
 
 ```text
-104 passed in 4.85s
+104 passed in 6.11s
 ```
 
-Important implementation context:
+Implementation constraints confirmed against the repo:
 
-- this feature **does require a schema migration** because atlas projection tables do not exist yet;
-- the repository has no existing React/Vite frontend workspace;
-- the current semantic map already exists and will be used as the structural input for atlas MVP;
-- atlas rebuilds must not run by default while screenshot pipeline runs are active.
-
----
+- atlas tables do not exist yet, so this feature requires a migration;
+- the repo already has screenshot filters, knowledge read APIs, and semantic map APIs;
+- the repo does not have an existing React/Vite frontend workspace;
+- runtime settings load the repo-local `.env`;
+- the current `/map` HTML page is a simple server-rendered shell, not a reusable frontend app;
+- atlas rebuilds must follow the same operational guard style as `rebuild-screenshot-derived-data`.
 
 ## Repository Roots
 
-- Plan document repo: `/home/xai/DEV/memoria`
-- Worktree for implementation: `/home/xai/DEV/memoria/.worktrees/memoria-semantic-atlas`
-- Frontend workspace to create inside the worktree: `frontend/atlas`
-- Atlas development database inside the worktree: `var/semantic-atlas.db`
-
----
+- Main checkout: `/home/xai/DEV/memoria`
+- Restart worktree: `/home/xai/DEV/memoria/.worktrees/memoria-semantic-atlas-restart`
+- Branch for this restart plan: `feat/semantic-atlas-restart-plan`
+- Plan file in this worktree: `docs/superpowers/plans/2026-04-11-semantic-atlas-cluster-visualization-implementation.md`
 
 ## File Structure
 
-### Already Present
+### Existing files to follow
 
-- `src/memoria/api/app.py`
-  Purpose: FastAPI application wiring and router registration.
-- `src/memoria/api/schemas.py`
-  Purpose: existing API response models.
-- `src/memoria/admin/cli.py`
-  Purpose: admin entrypoint for imports and rebuilds.
-- `src/memoria/admin/service.py`
-  Purpose: import and rebuild orchestration with active-run guards.
 - `src/memoria/domain/models.py`
-  Purpose: SQLAlchemy metadata model definitions.
+  Existing ORM table definitions and naming style.
 - `src/memoria/map/service.py`
-  Purpose: current semantic map rebuild and read logic.
-- `src/memoria/search/embeddings.py`
-  Purpose: current screenshot semantic embedding basis (`hashed-text-v1`, 96d).
+  Current screenshot semantic map rebuild/read logic; atlas should layer on top of this, not replace it.
+- `src/memoria/admin/service.py`
+  Existing guard pattern for rebuilds when screenshot pipeline runs are active.
+- `src/memoria/admin/cli.py`
+  Existing Typer-like CLI entrypoint and JSON output style.
+- `src/memoria/api/app.py`
+  FastAPI wiring and router registration.
+- `src/memoria/api/schemas.py`
+  Existing Pydantic response schemas.
 - `src/memoria/screenshots/read/filters.py`
-  Purpose: shared screenshot-oriented filter contract for backend read surfaces.
+  Shared screenshot filter contract that atlas should reuse.
+- `src/memoria/search/embeddings.py`
+  Existing MVP embedding basis: `screenshot_semantic_text` with `hashed-text-v1`, `96d`.
 - `tests/integration/_screenshot_read_helpers.py`
-  Purpose: reusable screenshot dataset seeding helpers.
-- `tests/integration/test_admin_service.py`
-  Purpose: rebuild and CLI guard verification.
-- `tests/integration/test_schema_tables.py`
-  Purpose: alembic-upgraded schema verification.
+  Existing screenshot fixture helpers to extend for atlas data.
 
-### Create
+### Files to create
 
 - `alembic/versions/20260411_04_add_atlas_projection_tables.py`
-  Purpose: create atlas run, region, item, and edge tables.
 - `src/memoria/atlas/__init__.py`
-  Purpose: export atlas rebuild and read functions.
 - `src/memoria/atlas/contracts.py`
-  Purpose: typed atlas filters, projection records, and read-service contracts.
 - `src/memoria/atlas/projection.py`
-  Purpose: atlas rebuild logic, region matching, subregioning, representatives, bridges, and shapes.
 - `src/memoria/atlas/service.py`
-  Purpose: read APIs over atlas runs, overview, region detail, and evidence slices.
 - `src/memoria/api/atlas.py`
-  Purpose: atlas JSON endpoints plus built frontend page route.
 - `tests/unit/test_atlas_projection_helpers.py`
-  Purpose: unit coverage for region identity reuse, representative ranking, and bridge classification.
 - `tests/integration/test_atlas_projection.py`
-  Purpose: atlas rebuild and persisted projection verification.
 - `tests/integration/test_atlas_api.py`
-  Purpose: atlas API and atlas page route verification.
 - `frontend/atlas/package.json`
-  Purpose: frontend workspace dependencies and scripts.
+- `frontend/atlas/package-lock.json`
 - `frontend/atlas/tsconfig.json`
-  Purpose: TypeScript compiler settings.
 - `frontend/atlas/vite.config.ts`
-  Purpose: Vite frontend build configuration.
 - `frontend/atlas/index.html`
-  Purpose: Vite HTML entrypoint.
 - `frontend/atlas/src/main.tsx`
-  Purpose: React application bootstrap.
 - `frontend/atlas/src/App.tsx`
-  Purpose: atlas page composition and top-level state wiring.
 - `frontend/atlas/src/styles.css`
-  Purpose: atlas UI visual system and layout styling.
-- `frontend/atlas/src/api/contracts.ts`
-  Purpose: frontend atlas response typings.
 - `frontend/atlas/src/api/client.ts`
-  Purpose: fetch wrappers for atlas endpoints.
+- `frontend/atlas/src/api/contracts.ts`
 - `frontend/atlas/src/state/atlasReducer.ts`
-  Purpose: pure selection and drill-down state machine.
 - `frontend/atlas/src/state/atlasReducer.test.ts`
-  Purpose: reducer coverage for selection and drill-down separation.
 - `frontend/atlas/src/lib/evidenceSections.ts`
-  Purpose: client-side assembly of representatives, bridges, and long-tail display sections.
 - `frontend/atlas/src/lib/evidenceSections.test.ts`
-  Purpose: section grouping coverage.
 - `frontend/atlas/src/canvas/AtlasCanvas.tsx`
-  Purpose: PixiJS scene host and event bridge into React state.
 - `frontend/atlas/src/components/AtlasToolbar.tsx`
-  Purpose: level-0 and shared search/filter controls.
 - `frontend/atlas/src/components/InsightDock.tsx`
-  Purpose: persistent right-hand workbench.
 - `frontend/atlas/src/components/RegionNavigator.tsx`
-  Purpose: breadcrumbs and explicit drill-down controls.
 - `frontend/atlas/src/components/EvidenceList.tsx`
-  Purpose: virtualized evidence list grouped by representatives, bridges, and long tail.
 
-### Modify
+### Files to modify
 
 - `.gitignore`
-  Purpose: ignore `frontend/atlas/node_modules` and `frontend/atlas/dist`.
 - `README.md`
-  Purpose: document atlas build, rebuild, and local run commands.
-- `src/memoria/api/app.py`
-  Purpose: register atlas router and pass optional frontend build path.
-- `src/memoria/api/schemas.py`
-  Purpose: add atlas response models and request-scoped overlay schemas.
-- `src/memoria/admin/cli.py`
-  Purpose: add atlas rebuild command.
-- `src/memoria/admin/service.py`
-  Purpose: expose guarded atlas rebuild service function.
 - `src/memoria/domain/models.py`
-  Purpose: add atlas ORM models.
+- `src/memoria/admin/service.py`
+- `src/memoria/admin/cli.py`
+- `src/memoria/api/app.py`
+- `src/memoria/api/schemas.py`
 - `tests/integration/_screenshot_read_helpers.py`
-  Purpose: seed a richer atlas fixture with multiple clusters, bridges, and stable timestamps.
 - `tests/integration/test_admin_service.py`
-  Purpose: verify atlas rebuild guard and CLI surface.
 - `tests/integration/test_schema_tables.py`
-  Purpose: verify atlas tables after alembic upgrade.
 
 ---
 
-### Task 1: Create The Dedicated Worktree And Capture The Baseline
-
-**Files:**
-- Verify only: current checkout and `.worktrees/memoria-semantic-atlas`
-
-- [ ] **Step 1: Create the worktree on a dedicated branch**
-
-Run:
-
-```bash
-git worktree add .worktrees/memoria-semantic-atlas -b feat/semantic-atlas main
-```
-
-Expected: a new worktree exists at `.worktrees/memoria-semantic-atlas` and is checked out on `feat/semantic-atlas`.
-
-- [ ] **Step 2: Enter the worktree and confirm it is clean**
-
-Run:
-
-```bash
-cd .worktrees/memoria-semantic-atlas
-git status --short
-```
-
-Expected:
-
-```text
-[no output]
-```
-
-- [ ] **Step 3: Point the worktree at a separate development database**
-
-Run:
-
-```bash
-mkdir -p var
-printf '%s\n' "MEMORIA_DATABASE_URL=sqlite:///$PWD/var/semantic-atlas.db" > .env.local
-```
-
-Expected: `.env.local` exists and points to a SQLite database under the worktree.
-
-- [ ] **Step 4: Run the Python baseline suite from the worktree**
-
-Run:
-
-```bash
-uv run pytest -v
-```
-
-Expected:
-
-```text
-104 passed
-```
-
-- [ ] **Step 5: Confirm you are not on `main`**
-
-Run:
-
-```bash
-git rev-parse --abbrev-ref HEAD
-```
-
-Expected:
-
-```text
-feat/semantic-atlas
-```
-
----
-
-### Task 2: Add Atlas Projection Tables And Alembic Migration
+### Task 1: Add Atlas Tables, ORM Models, And Projection Contracts
 
 **Files:**
 - Create: `alembic/versions/20260411_04_add_atlas_projection_tables.py`
+- Create: `src/memoria/atlas/__init__.py`
+- Create: `src/memoria/atlas/contracts.py`
 - Modify: `src/memoria/domain/models.py`
 - Modify: `tests/integration/test_schema_tables.py`
 
@@ -249,102 +138,62 @@ Run:
 uv run pytest tests/integration/test_schema_tables.py::test_initial_schema_includes_screenshot_knowledge_core_tables -v
 ```
 
-Expected: FAIL because the new `atlas_*` tables are missing.
+Expected:
 
-- [ ] **Step 3: Add atlas ORM models and the alembic migration**
+```text
+FAILED tests/integration/test_schema_tables.py::test_initial_schema_includes_screenshot_knowledge_core_tables
+```
+
+- [ ] **Step 3: Add atlas ORM models and the migration**
 
 ```python
 # src/memoria/domain/models.py
 class AtlasRun(Base):
     __tablename__ = "atlas_runs"
 
-    id: Mapped[int] = mapped_column(primary_key=True)
-    atlas_key: Mapped[str] = mapped_column(String(64), index=True)
-    status: Mapped[str] = mapped_column(String(32), index=True)
-    source_family: Mapped[str] = mapped_column(String(32), index=True)
-    source_count: Mapped[int] = mapped_column(Integer)
-    layout_version: Mapped[str] = mapped_column(String(64))
-    embedding_type: Mapped[str] = mapped_column(String(64))
-    embedding_model: Mapped[str] = mapped_column(String(128))
-    embedding_version: Mapped[str] = mapped_column(String(64))
-    clustering_method: Mapped[str] = mapped_column(String(128))
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    atlas_key: Mapped[str] = mapped_column(String(120), index=True)
+    source_family: Mapped[str] = mapped_column(String(40))
+    status: Mapped[str] = mapped_column(String(40), default="completed")
+    source_count: Mapped[int] = mapped_column(Integer, default=0)
+    source_snapshot_id: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    corpus_hash: Mapped[str | None] = mapped_column(String(120), nullable=True)
+    embedding_type: Mapped[str] = mapped_column(String(120))
+    embedding_model: Mapped[str] = mapped_column(String(120))
+    embedding_version: Mapped[str] = mapped_column(String(120))
+    clustering_method: Mapped[str] = mapped_column(String(120))
     clustering_params_json: Mapped[str] = mapped_column(Text, default="{}")
-    random_seed: Mapped[int] = mapped_column(Integer)
-    source_snapshot_id: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    corpus_hash: Mapped[str | None] = mapped_column(String(64), nullable=True)
-    created_at: Mapped[datetime] = mapped_column(DateTime(), server_default=func.now(), nullable=False)
-    completed_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
-    published_at: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True, index=True)
+    random_seed: Mapped[int] = mapped_column(Integer, default=42)
+    layout_version: Mapped[str] = mapped_column(String(120), default="atlas-world-v1")
+    created_at: Mapped[datetime] = mapped_column(DateTime, server_default=func.now())
+    completed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    published_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
 
 class AtlasRegion(Base):
     __tablename__ = "atlas_regions"
-    __table_args__ = (
-        UniqueConstraint("atlas_run_id", "region_key", name="uq_atlas_region_identity"),
-    )
 
-    id: Mapped[int] = mapped_column(primary_key=True)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     atlas_run_id: Mapped[int] = mapped_column(ForeignKey("atlas_runs.id", ondelete="CASCADE"), index=True)
-    region_key: Mapped[str] = mapped_column(String(128), index=True)
-    parent_region_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
+    region_key: Mapped[str] = mapped_column(String(160), index=True)
+    parent_region_key: Mapped[str | None] = mapped_column(String(160), nullable=True, index=True)
     level: Mapped[int] = mapped_column(Integer)
-    title: Mapped[str] = mapped_column(String(255))
-    x: Mapped[float] = mapped_column(Float, default=0.0)
-    y: Mapped[float] = mapped_column(Float, default=0.0)
-    region_shape_json: Mapped[str] = mapped_column(Text, default="{}")
-    label_anchor_json: Mapped[str] = mapped_column(Text, default="{}")
-    item_count: Mapped[int] = mapped_column(Integer)
+    title: Mapped[str] = mapped_column(String(240))
+    x: Mapped[float] = mapped_column(Float)
+    y: Mapped[float] = mapped_column(Float)
+    label_x: Mapped[float] = mapped_column(Float)
+    label_y: Mapped[float] = mapped_column(Float)
+    region_shape_json: Mapped[str] = mapped_column(Text, default="[]")
+    item_count: Mapped[int] = mapped_column(Integer, default=0)
     top_labels_json: Mapped[str] = mapped_column(Text, default="[]")
     top_apps_json: Mapped[str] = mapped_column(Text, default="[]")
     top_people_json: Mapped[str] = mapped_column(Text, default="[]")
     top_entities_json: Mapped[str] = mapped_column(Text, default="[]")
+    time_start: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+    time_end: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
     representatives_json: Mapped[str] = mapped_column(Text, default="[]")
     bridge_neighbors_json: Mapped[str] = mapped_column(Text, default="[]")
     cohesion_score: Mapped[float] = mapped_column(Float, default=0.0)
-    time_start: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
-    time_end: Mapped[datetime | None] = mapped_column(DateTime(), nullable=True)
-
-
-class AtlasItem(Base):
-    __tablename__ = "atlas_items"
-    __table_args__ = (
-        UniqueConstraint("atlas_run_id", "source_item_id", name="uq_atlas_item_identity"),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    atlas_run_id: Mapped[int] = mapped_column(ForeignKey("atlas_runs.id", ondelete="CASCADE"), index=True)
-    source_item_id: Mapped[int] = mapped_column(ForeignKey("source_items.id", ondelete="CASCADE"), index=True)
-    region_key: Mapped[str] = mapped_column(String(128), index=True)
-    subregion_key: Mapped[str | None] = mapped_column(String(128), nullable=True, index=True)
-    x: Mapped[float] = mapped_column(Float, default=0.0)
-    y: Mapped[float] = mapped_column(Float, default=0.0)
-    is_representative: Mapped[int] = mapped_column(Integer, default=0)
-    representative_rank: Mapped[int | None] = mapped_column(Integer, nullable=True)
-    is_bridge: Mapped[int] = mapped_column(Integer, default=0)
-    bridge_type: Mapped[str | None] = mapped_column(String(32), nullable=True)
-    secondary_region_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
-    bridge_score: Mapped[float | None] = mapped_column(Float, nullable=True)
-    score_json: Mapped[str] = mapped_column(Text, default="{}")
-
-
-class AtlasEdge(Base):
-    __tablename__ = "atlas_edges"
-    __table_args__ = (
-        UniqueConstraint(
-            "atlas_run_id",
-            "source_region_key",
-            "target_region_key",
-            "edge_type",
-            name="uq_atlas_edge_identity",
-        ),
-    )
-
-    id: Mapped[int] = mapped_column(primary_key=True)
-    atlas_run_id: Mapped[int] = mapped_column(ForeignKey("atlas_runs.id", ondelete="CASCADE"), index=True)
-    source_region_key: Mapped[str] = mapped_column(String(128), index=True)
-    target_region_key: Mapped[str] = mapped_column(String(128), index=True)
-    weight: Mapped[float] = mapped_column(Float, default=0.0)
-    edge_type: Mapped[str] = mapped_column(String(32))
 ```
 
 ```python
@@ -352,632 +201,427 @@ class AtlasEdge(Base):
 def upgrade() -> None:
     op.create_table(
         "atlas_runs",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("atlas_key", sa.String(length=64), nullable=False),
-        sa.Column("status", sa.String(length=32), nullable=False),
-        sa.Column("source_family", sa.String(length=32), nullable=False),
+        sa.Column("id", sa.Integer(), primary_key=True, autoincrement=True),
+        sa.Column("atlas_key", sa.String(length=120), nullable=False),
+        sa.Column("source_family", sa.String(length=40), nullable=False),
+        sa.Column("status", sa.String(length=40), nullable=False),
         sa.Column("source_count", sa.Integer(), nullable=False),
-        sa.Column("layout_version", sa.String(length=64), nullable=False),
-        sa.Column("embedding_type", sa.String(length=64), nullable=False),
-        sa.Column("embedding_model", sa.String(length=128), nullable=False),
-        sa.Column("embedding_version", sa.String(length=64), nullable=False),
-        sa.Column("clustering_method", sa.String(length=128), nullable=False),
-        sa.Column("clustering_params_json", sa.Text(), nullable=False, server_default="{}"),
+        sa.Column("source_snapshot_id", sa.String(length=120), nullable=True),
+        sa.Column("corpus_hash", sa.String(length=120), nullable=True),
+        sa.Column("embedding_type", sa.String(length=120), nullable=False),
+        sa.Column("embedding_model", sa.String(length=120), nullable=False),
+        sa.Column("embedding_version", sa.String(length=120), nullable=False),
+        sa.Column("clustering_method", sa.String(length=120), nullable=False),
+        sa.Column("clustering_params_json", sa.Text(), nullable=False),
         sa.Column("random_seed", sa.Integer(), nullable=False),
-        sa.Column("source_snapshot_id", sa.String(length=128), nullable=True),
-        sa.Column("corpus_hash", sa.String(length=64), nullable=True),
-        sa.Column("created_at", sa.DateTime(), nullable=False, server_default=sa.func.now()),
+        sa.Column("layout_version", sa.String(length=120), nullable=False),
+        sa.Column("created_at", sa.DateTime(), server_default=sa.func.now(), nullable=False),
         sa.Column("completed_at", sa.DateTime(), nullable=True),
         sa.Column("published_at", sa.DateTime(), nullable=True),
     )
-    op.create_index("ix_atlas_runs_atlas_key", "atlas_runs", ["atlas_key"])
-    op.create_index("ix_atlas_runs_status", "atlas_runs", ["status"])
-    op.create_index("ix_atlas_runs_published_at", "atlas_runs", ["published_at"])
-    op.create_table(
-        "atlas_regions",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("atlas_run_id", sa.Integer(), sa.ForeignKey("atlas_runs.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("region_key", sa.String(length=128), nullable=False),
-        sa.Column("parent_region_key", sa.String(length=128), nullable=True),
-        sa.Column("level", sa.Integer(), nullable=False),
-        sa.Column("title", sa.String(length=255), nullable=False),
-        sa.Column("x", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("y", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("region_shape_json", sa.Text(), nullable=False, server_default="{}"),
-        sa.Column("label_anchor_json", sa.Text(), nullable=False, server_default="{}"),
-        sa.Column("item_count", sa.Integer(), nullable=False),
-        sa.Column("top_labels_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("top_apps_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("top_people_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("top_entities_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("representatives_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("bridge_neighbors_json", sa.Text(), nullable=False, server_default="[]"),
-        sa.Column("cohesion_score", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("time_start", sa.DateTime(), nullable=True),
-        sa.Column("time_end", sa.DateTime(), nullable=True),
-        sa.UniqueConstraint("atlas_run_id", "region_key", name="uq_atlas_region_identity"),
-    )
-    op.create_table(
-        "atlas_items",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("atlas_run_id", sa.Integer(), sa.ForeignKey("atlas_runs.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("source_item_id", sa.Integer(), sa.ForeignKey("source_items.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("region_key", sa.String(length=128), nullable=False),
-        sa.Column("subregion_key", sa.String(length=128), nullable=True),
-        sa.Column("x", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("y", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("is_representative", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("representative_rank", sa.Integer(), nullable=True),
-        sa.Column("is_bridge", sa.Integer(), nullable=False, server_default="0"),
-        sa.Column("bridge_type", sa.String(length=32), nullable=True),
-        sa.Column("secondary_region_key", sa.String(length=128), nullable=True),
-        sa.Column("bridge_score", sa.Float(), nullable=True),
-        sa.Column("score_json", sa.Text(), nullable=False, server_default="{}"),
-        sa.UniqueConstraint("atlas_run_id", "source_item_id", name="uq_atlas_item_identity"),
-    )
-    op.create_table(
-        "atlas_edges",
-        sa.Column("id", sa.Integer(), primary_key=True),
-        sa.Column("atlas_run_id", sa.Integer(), sa.ForeignKey("atlas_runs.id", ondelete="CASCADE"), nullable=False),
-        sa.Column("source_region_key", sa.String(length=128), nullable=False),
-        sa.Column("target_region_key", sa.String(length=128), nullable=False),
-        sa.Column("weight", sa.Float(), nullable=False, server_default="0"),
-        sa.Column("edge_type", sa.String(length=32), nullable=False),
-        sa.UniqueConstraint(
-            "atlas_run_id",
-            "source_region_key",
-            "target_region_key",
-            "edge_type",
-            name="uq_atlas_edge_identity",
-        ),
-    )
-
-
-def downgrade() -> None:
-    op.drop_table("atlas_edges")
-    op.drop_table("atlas_items")
-    op.drop_table("atlas_regions")
-    op.drop_table("atlas_runs")
 ```
-
-- [ ] **Step 4: Run the migration-backed schema test again**
-
-Run:
-
-```bash
-uv run pytest tests/integration/test_schema_tables.py::test_initial_schema_includes_screenshot_knowledge_core_tables -v
-```
-
-Expected:
-
-```text
-PASSED
-```
-
-- [ ] **Step 5: Commit the schema change**
-
-Run:
-
-```bash
-git add alembic/versions/20260411_04_add_atlas_projection_tables.py src/memoria/domain/models.py tests/integration/test_schema_tables.py
-git commit -m "feat: add atlas projection tables"
-```
-
----
-
-### Task 3: Build Atlas Projection Logic And Seed A Rich Atlas Fixture
-
-**Files:**
-- Create: `src/memoria/atlas/__init__.py`
-- Create: `src/memoria/atlas/contracts.py`
-- Create: `src/memoria/atlas/projection.py`
-- Create: `tests/unit/test_atlas_projection_helpers.py`
-- Create: `tests/integration/test_atlas_projection.py`
-- Modify: `tests/integration/_screenshot_read_helpers.py`
-
-- [ ] **Step 1: Add failing unit tests for region reuse, representative ranking, and bridges**
-
-```python
-# tests/unit/test_atlas_projection_helpers.py
-from memoria.atlas.projection import classify_bridge
-from memoria.atlas.projection import pick_region_key
-from memoria.atlas.projection import rank_representative_candidates
-
-
-def test_pick_region_key_reuses_previous_region_when_overlap_is_high() -> None:
-    previous = [{"region_key": "region-telegram", "source_ids": {1, 2, 3, 4}}]
-    current = {2, 3, 4, 5}
-
-    assert pick_region_key(previous_regions=previous, current_source_ids=current, fallback_key="region-new") == "region-telegram"
-
-
-def test_rank_representative_candidates_prefers_semantic_medoid_then_metadata() -> None:
-    ranked = rank_representative_candidates(
-        [
-            {"source_item_id": 10, "distance": 0.10, "has_summary": True, "has_app_hint": True, "object_ref_count": 2, "knowledge_count": 1},
-            {"source_item_id": 11, "distance": 0.08, "has_summary": False, "has_app_hint": False, "object_ref_count": 0, "knowledge_count": 0},
-        ]
-    )
-
-    assert ranked[0] == 10
-
-
-def test_classify_bridge_marks_internal_when_secondary_subregion_is_close() -> None:
-    bridge = classify_bridge(
-        primary_region_key="region-chat",
-        secondary_region_key="region-chat",
-        primary_subregion_key="sub-a",
-        secondary_subregion_key="sub-b",
-        primary_score=0.81,
-        secondary_score=0.76,
-    )
-
-    assert bridge["is_bridge"] is True
-    assert bridge["bridge_type"] == "internal_bridge"
-```
-
-- [ ] **Step 2: Add a failing integration test for rebuilding a complete atlas run**
-
-```python
-# tests/integration/test_atlas_projection.py
-from sqlalchemy import func
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from memoria.atlas.projection import rebuild_screenshot_atlas_projection
-from memoria.domain.models import AtlasEdge
-from memoria.domain.models import AtlasItem
-from memoria.domain.models import AtlasRegion
-from memoria.domain.models import AtlasRun
-from tests.integration._screenshot_read_helpers import create_test_engine
-from tests.integration._screenshot_read_helpers import seed_atlas_fixture
-
-
-def test_rebuild_screenshot_atlas_projection_creates_completed_published_run(tmp_path):
-    engine = create_test_engine(tmp_path, "atlas-projection.db")
-    seed_atlas_fixture(engine, tmp_path)
-
-    with Session(engine) as session:
-        rebuild_screenshot_atlas_projection(session, atlas_key="screenshots_atlas_v1")
-        session.commit()
-
-    with Session(engine) as session:
-        run = session.scalar(
-            select(AtlasRun).where(AtlasRun.atlas_key == "screenshots_atlas_v1").order_by(AtlasRun.id.desc())
-        )
-        assert run is not None
-        assert run.status == "completed"
-        assert run.completed_at is not None
-        assert run.published_at is not None
-        assert session.scalar(select(func.count()).select_from(AtlasRegion)) > 0
-        assert session.scalar(select(func.count()).select_from(AtlasItem)) > 0
-        assert session.scalar(select(func.count()).select_from(AtlasEdge)) > 0
-```
-
-- [ ] **Step 3: Run the new atlas tests and verify they fail**
-
-Run:
-
-```bash
-uv run pytest tests/unit/test_atlas_projection_helpers.py tests/integration/test_atlas_projection.py -v
-```
-
-Expected: FAIL with import errors for `memoria.atlas`.
-
-- [ ] **Step 4: Implement the atlas projection module and richer atlas fixture**
 
 ```python
 # src/memoria/atlas/contracts.py
-from __future__ import annotations
-
-from dataclasses import dataclass
-from datetime import datetime
+@dataclass(frozen=True, slots=True)
+class AtlasWorldPoint:
+    x: float
+    y: float
 
 
 @dataclass(frozen=True, slots=True)
-class AtlasProjectionConfig:
-    atlas_key: str = "screenshots_atlas_v1"
-    layout_version: str = "atlas-layout-v1"
-    embedding_type: str = "screenshot_semantic_text"
-    embedding_model: str = "hashed-text-v1"
-    embedding_version: str = "mvp"
-    clustering_method: str = "semantic-map-top-level-v1+greedy-subregions-v1"
-    random_seed: int = 42
+class AtlasRegionShape:
+    shape_type: str
+    rings: list[list[AtlasWorldPoint]]
 
 
 @dataclass(frozen=True, slots=True)
-class AtlasRebuildResult:
-    atlas_run_id: int
-    region_count: int
-    subregion_count: int
-    edge_count: int
-    item_count: int
-    published_at: datetime
+class AtlasRequestOverlay:
+    match_count: int
+    matched_source_item_ids: list[int]
 ```
 
-```python
-# src/memoria/atlas/projection.py
-from __future__ import annotations
-
-import hashlib
-import json
-from collections import Counter
-from dataclasses import dataclass
-from datetime import datetime
-from math import atan2
-from math import cos
-from math import sin
-
-from sqlalchemy import select
-from sqlalchemy.orm import Session
-
-from memoria.atlas.contracts import AtlasProjectionConfig
-from memoria.atlas.contracts import AtlasRebuildResult
-from memoria.domain.models import AtlasEdge
-from memoria.domain.models import AtlasItem
-from memoria.domain.models import AtlasRegion
-from memoria.domain.models import AtlasRun
-from memoria.domain.models import AssetInterpretation
-from memoria.domain.models import KnowledgeEvidenceLink
-from memoria.domain.models import SemanticCluster
-from memoria.domain.models import SemanticMapPoint
-from memoria.domain.models import SemanticMapRun
-from memoria.domain.models import SourceItem
-
-
-def rebuild_screenshot_atlas_projection(
-    session: Session,
-    *,
-    atlas_key: str = "screenshots_atlas_v1",
-) -> AtlasRebuildResult:
-    latest_map_run = session.scalar(
-        select(SemanticMapRun).where(SemanticMapRun.map_key == "screenshots_semantic_v1").order_by(SemanticMapRun.id.desc())
-    )
-    if latest_map_run is None:
-        raise RuntimeError("semantic map run not found")
-
-    atlas_run = AtlasRun(
-        atlas_key=atlas_key,
-        status="building",
-        source_family="screenshot",
-        source_count=latest_map_run.source_count,
-        layout_version="atlas-layout-v1",
-        embedding_type="screenshot_semantic_text",
-        embedding_model="hashed-text-v1",
-        embedding_version="mvp",
-        clustering_method="semantic-map-top-level-v1+greedy-subregions-v1",
-        clustering_params_json=json.dumps({"top_level_source": "semantic_map", "subregion_merge_min_size": 3}, sort_keys=True),
-        random_seed=42,
-        source_snapshot_id=str(latest_map_run.id),
-        corpus_hash=_compute_corpus_hash(session, latest_map_run.id),
-    )
-    session.add(atlas_run)
-    session.flush()
-
-    top_regions = _project_top_regions(session, atlas_run_id=atlas_run.id, map_run_id=latest_map_run.id)
-    edge_count = _persist_region_edges(session, atlas_run_id=atlas_run.id, regions=top_regions)
-
-    published_at = datetime.utcnow()
-    atlas_run.status = "completed"
-    atlas_run.completed_at = published_at
-    atlas_run.published_at = published_at
-    session.add(atlas_run)
-    session.flush()
-
-    return AtlasRebuildResult(
-        atlas_run_id=atlas_run.id,
-        region_count=sum(1 for region in top_regions if region["level"] == 0),
-        subregion_count=sum(1 for region in top_regions if region["level"] == 1),
-        edge_count=edge_count,
-        item_count=sum(region["item_count"] for region in top_regions if region["level"] == 0),
-        published_at=published_at,
-    )
-
-
-def pick_region_key(*, previous_regions: list[dict[str, object]], current_source_ids: set[int], fallback_key: str) -> str:
-    best_key = fallback_key
-    best_overlap = 0.0
-    for candidate in previous_regions:
-        overlap = len(current_source_ids & set(candidate["source_ids"])) / max(len(current_source_ids | set(candidate["source_ids"])), 1)
-        if overlap > best_overlap:
-            best_overlap = overlap
-            best_key = str(candidate["region_key"])
-    return best_key if best_overlap >= 0.5 else fallback_key
-
-
-def rank_representative_candidates(candidates: list[dict[str, object]]) -> list[int]:
-    ranked = sorted(
-        candidates,
-        key=lambda item: (
-            float(item["distance"]),
-            -int(bool(item["has_summary"])),
-            -int(bool(item["has_app_hint"])),
-            -int(item["object_ref_count"]),
-            -int(item["knowledge_count"]),
-        ),
-    )
-    return [int(item["source_item_id"]) for item in ranked]
-
-
-def classify_bridge(*, primary_region_key: str, secondary_region_key: str, primary_subregion_key: str | None, secondary_subregion_key: str | None, primary_score: float, secondary_score: float) -> dict[str, object]:
-    margin = primary_score - secondary_score
-    if secondary_region_key == "" or margin > 0.08:
-        return {"is_bridge": False, "bridge_type": None, "bridge_score": None}
-    bridge_type = "internal_bridge" if primary_region_key == secondary_region_key and primary_subregion_key != secondary_subregion_key else "external_bridge"
-    return {"is_bridge": True, "bridge_type": bridge_type, "bridge_score": round(secondary_score, 4)}
-```
-
-```python
-# tests/integration/_screenshot_read_helpers.py
-@dataclass(frozen=True, slots=True)
-class SeededAtlasFixture:
-    region_source_ids: dict[str, list[int]]
-
-
-def seed_atlas_fixture(engine, tmp_path: Path) -> SeededAtlasFixture:
-    fixture_specs = [
-        ("telegram-chat-1.png", "atlas-telegram-1", b"telegram-1", "mobile-sync", "Telegram Berlin trip planning and ticket booking.", "telegram"),
-        ("telegram-chat-2.png", "atlas-telegram-2", b"telegram-2", "mobile-sync", "Telegram hotel shortlist for Berlin trip.", "telegram"),
-        ("claude-code-1.png", "atlas-claude-1", b"claude-1", "desktop-sync", "Claude Code cost estimate and token usage summary.", "claude-code"),
-        ("claude-code-2.png", "atlas-claude-2", b"claude-2", "desktop-sync", "Claude Code budget planning for agent runs.", "claude-code"),
-        ("instagram-fashion-1.png", "atlas-instagram-1", b"instagram-1", "manual-upload", "Instagram outfit inspiration and fashion carousel.", "instagram"),
-        ("instagram-fashion-2.png", "atlas-instagram-2", b"instagram-2", "manual-upload", "Instagram fashion reel with styling notes.", "instagram"),
-        ("bridge-booking.png", "atlas-bridge-booking", b"bridge-booking", "mobile-sync", "Telegram booking chat with budgeting notes copied into Claude Code.", "telegram"),
-    ]
-
-    region_source_ids: dict[str, list[int]] = {"telegram": [], "claude-code": [], "instagram": []}
-    for filename, external_id, content, connector_instance_id, ocr_text, app_hint in fixture_specs:
-        source_item_id = _seed_interpretation_only(
-            engine,
-            tmp_path,
-            filename=filename,
-            external_id=external_id,
-            content=content,
-            ocr_text=ocr_text,
-            connector_instance_id=connector_instance_id,
-        )
-        key = "telegram" if app_hint == "telegram" else app_hint
-        if key in region_source_ids:
-            region_source_ids[key].append(source_item_id)
-
-    with Session(engine) as seeded_session:
-        from memoria.map.service import rebuild_semantic_map
-
-        rebuild_semantic_map(seeded_session, source_family="screenshot")
-        seeded_session.commit()
-
-    return SeededAtlasFixture(region_source_ids=region_source_ids)
-```
-
-- [ ] **Step 5: Run the atlas projection tests and commit**
+- [ ] **Step 4: Run targeted schema verification**
 
 Run:
 
 ```bash
-uv run pytest tests/unit/test_atlas_projection_helpers.py tests/integration/test_atlas_projection.py -v
-git add src/memoria/atlas/__init__.py src/memoria/atlas/contracts.py src/memoria/atlas/projection.py tests/unit/test_atlas_projection_helpers.py tests/integration/test_atlas_projection.py tests/integration/_screenshot_read_helpers.py
-git commit -m "feat: add atlas projection rebuild"
+uv run pytest tests/integration/test_schema_tables.py -v
 ```
 
 Expected:
 
 ```text
-PASSED
+PASSED tests/integration/test_schema_tables.py::test_initial_schema_includes_screenshot_knowledge_core_tables
+```
+
+- [ ] **Step 5: Commit the schema layer**
+
+```bash
+git add alembic/versions/20260411_04_add_atlas_projection_tables.py src/memoria/atlas/__init__.py src/memoria/atlas/contracts.py src/memoria/domain/models.py tests/integration/test_schema_tables.py
+git commit -m "feat: add atlas projection schema"
 ```
 
 ---
 
-### Task 4: Add The Guarded Atlas Rebuild Admin Command
+### Task 2: Implement Deterministic Atlas Projection Helpers
 
 **Files:**
-- Modify: `src/memoria/admin/cli.py`
-- Modify: `src/memoria/admin/service.py`
-- Modify: `tests/integration/test_admin_service.py`
+- Create: `src/memoria/atlas/projection.py`
+- Create: `tests/unit/test_atlas_projection_helpers.py`
+- Modify: `src/memoria/atlas/contracts.py`
 
-- [ ] **Step 1: Add failing admin tests for atlas rebuild guarding**
+- [ ] **Step 1: Write failing unit tests for subregions, representatives, bridges, and key reuse**
 
 ```python
-# tests/integration/test_admin_service.py
-import pytest
-from sqlalchemy.orm import Session
-
-from memoria.ingest.service import IngestScreenshotCommand
-from memoria.ingest.service import ingest_screenshot
-
-from memoria.admin.service import rebuild_screenshot_atlas
+# tests/unit/test_atlas_projection_helpers.py
+def test_derive_subregion_count_scales_with_region_size():
+    assert derive_subregion_count(4) == 0
+    assert derive_subregion_count(18) == 3
+    assert derive_subregion_count(65) == 6
 
 
-def test_rebuild_screenshot_atlas_refuses_active_screenshot_runs(tmp_path) -> None:
-    engine = _create_engine(tmp_path, "atlas-rebuild-guard.db")
-    blob_dir = tmp_path / "blobs"
-
-    with Session(engine) as session:
-        ingest_screenshot(
-            session,
-            IngestScreenshotCommand(
-                filename="Screenshot_20240411_101500_ChatGPT.png",
-                media_type="image/png",
-                content=b"active atlas rebuild run",
-                connector_instance_id="manual-upload",
-                external_id="active-atlas-run",
-                blob_dir=blob_dir,
-            ),
-        )
-        session.commit()
-
-    with Session(engine) as session:
-        with pytest.raises(RuntimeError, match="active screenshot pipeline runs: 1"):
-            rebuild_screenshot_atlas(session)
-
-
-def test_admin_cli_rebuild_screenshot_atlas_command_accepts_force_flag(tmp_path, monkeypatch, capsys) -> None:
-    from memoria.admin import cli
-
-    _create_engine(tmp_path, "atlas-rebuild-cli.db")
-
-    received = {}
-
-    def _fake_rebuild(session, *, force=False):
-        received["force"] = force
-        return {"atlas_run_id": 1, "edge_count": 2, "item_count": 7, "published_at": "2026-04-11T12:00:00", "region_count": 3, "subregion_count": 5}
-
-    monkeypatch.setattr(cli, "rebuild_screenshot_atlas", _fake_rebuild)
-
-    exit_code = cli.main(
+def test_select_representatives_prefers_medoid_then_metadata_quality():
+    ranked = select_representatives(
         [
-            "--database-url",
-            f"sqlite:///{tmp_path / 'atlas-rebuild-cli.db'}",
-            "rebuild-screenshot-atlas",
-            "--force",
-        ]
+            AtlasCandidateItem(10, [1.0, 0.0], "thin", None, [], 0),
+            AtlasCandidateItem(11, [0.98, 0.02], "rich summary", "telegram", ["topic:trip"], 2),
+            AtlasCandidateItem(12, [0.97, 0.03], "rich summary", "telegram", ["topic:trip", "thread:berlin"], 3),
+        ],
+        limit=2,
     )
+    assert [item.source_item_id for item in ranked] == [12, 11]
 
-    assert exit_code == 0
-    assert received["force"] is True
-    assert '"atlas_run_id": 1' in capsys.readouterr().out
+
+def test_classify_bridge_marks_small_primary_secondary_margin():
+    classification = classify_bridge(
+        primary_region_key="region-a",
+        secondary_region_key="region-b",
+        primary_distance=0.32,
+        secondary_distance=0.38,
+        same_parent=False,
+    )
+    assert classification is not None
+    assert classification.bridge_type == "external_bridge"
+
+
+def test_match_region_identity_reuses_prior_key_when_overlap_is_strong():
+    matched = match_region_identity(
+        prior_regions=[PriorRegionIdentity("atlas-r1", {1, 2, 3, 4}, [0.1, 0.2])],
+        source_item_ids={1, 2, 3, 5},
+        centroid=[0.1, 0.22],
+        label_tokens={"telegram", "travel"},
+    )
+    assert matched == "atlas-r1"
 ```
 
-- [ ] **Step 2: Run the admin atlas tests and verify they fail**
+- [ ] **Step 2: Run the helper tests and verify they fail**
 
 Run:
 
 ```bash
-uv run pytest tests/integration/test_admin_service.py -v
+uv run pytest tests/unit/test_atlas_projection_helpers.py -v
 ```
 
-Expected: FAIL because the CLI command and service function do not exist yet.
+Expected:
 
-- [ ] **Step 3: Implement the guarded admin service and CLI command**
+```text
+FAILED tests/unit/test_atlas_projection_helpers.py
+```
+
+- [ ] **Step 3: Implement the pure helper layer in `projection.py`**
+
+```python
+# src/memoria/atlas/projection.py
+def derive_subregion_count(item_count: int) -> int:
+    if item_count < 8:
+        return 0
+    if item_count < 20:
+        return 3
+    if item_count < 40:
+        return 4
+    if item_count < 80:
+        return 6
+    return 8
+
+
+def select_representatives(
+    items: list[AtlasCandidateItem],
+    *,
+    limit: int,
+) -> list[AtlasCandidateItem]:
+    ordered = sorted(
+        items,
+        key=lambda item: (
+            -item.metadata_score,
+            item.medoid_distance,
+            item.source_item_id,
+        ),
+    )
+    selected: list[AtlasCandidateItem] = []
+    for candidate in ordered:
+        if any(existing.near_duplicate_key == candidate.near_duplicate_key for existing in selected):
+            continue
+        selected.append(candidate)
+        if len(selected) == limit:
+            break
+    return selected
+
+
+def classify_bridge(
+    *,
+    primary_region_key: str,
+    secondary_region_key: str,
+    primary_distance: float,
+    secondary_distance: float,
+    same_parent: bool,
+) -> BridgeClassification | None:
+    margin = secondary_distance - primary_distance
+    if margin > 0.12:
+        return None
+    return BridgeClassification(
+        primary_region_key=primary_region_key,
+        secondary_region_key=secondary_region_key,
+        bridge_type="internal_bridge" if same_parent else "external_bridge",
+        bridge_score=max(0.0, 1.0 - margin),
+    )
+```
+
+```python
+# src/memoria/atlas/contracts.py
+@dataclass(frozen=True, slots=True)
+class AtlasCandidateItem:
+    source_item_id: int
+    vector: list[float]
+    semantic_summary: str | None
+    app_hint: str | None
+    object_refs: list[str]
+    knowledge_count: int
+
+    @property
+    def metadata_score(self) -> float:
+        return (
+            (2.0 if self.semantic_summary else 0.0)
+            + (1.0 if self.app_hint else 0.0)
+            + min(float(len(self.object_refs)), 2.0)
+            + min(float(self.knowledge_count), 3.0)
+        )
+```
+
+- [ ] **Step 4: Run the helper tests until they pass**
+
+Run:
+
+```bash
+uv run pytest tests/unit/test_atlas_projection_helpers.py -v
+```
+
+Expected:
+
+```text
+4 passed
+```
+
+- [ ] **Step 5: Commit the helper layer**
+
+```bash
+git add src/memoria/atlas/contracts.py src/memoria/atlas/projection.py tests/unit/test_atlas_projection_helpers.py
+git commit -m "feat: add atlas projection helpers"
+```
+
+---
+
+### Task 3: Build And Guard Atlas Rebuilds
+
+**Files:**
+- Modify: `src/memoria/atlas/projection.py`
+- Modify: `src/memoria/admin/service.py`
+- Modify: `src/memoria/admin/cli.py`
+- Modify: `tests/integration/_screenshot_read_helpers.py`
+- Create: `tests/integration/test_atlas_projection.py`
+- Modify: `tests/integration/test_admin_service.py`
+
+- [ ] **Step 1: Seed a richer atlas fixture and add failing rebuild tests**
+
+```python
+# tests/integration/test_atlas_projection.py
+def test_rebuild_screenshot_atlas_persists_latest_published_run(tmp_path):
+    engine = _create_engine(tmp_path, "atlas-rebuild.db")
+    seeded = seed_atlas_dataset(engine, tmp_path)
+
+    with Session(engine) as session:
+        result = rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+
+    assert result["atlas_run_id"] >= 1
+    assert result["region_count"] >= 2
+    assert result["item_count"] >= seeded.total_source_items
+
+
+def test_rebuild_screenshot_atlas_reuses_prior_region_keys_when_shape_is_stable(tmp_path):
+    engine = _create_engine(tmp_path, "atlas-rebuild-stable.db")
+    seed_atlas_dataset(engine, tmp_path)
+
+    with Session(engine) as session:
+        first = rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+    with Session(engine) as session:
+        second = rebuild_screenshot_atlas(session, force=True)
+        session.commit()
+
+    assert first["top_region_keys"] == second["top_region_keys"]
+```
+
+```python
+# tests/integration/test_admin_service.py
+def test_rebuild_screenshot_atlas_refuses_active_screenshot_runs(tmp_path):
+    with Session(engine) as session:
+        with pytest.raises(RuntimeError, match="active screenshot pipeline runs: 1"):
+            rebuild_screenshot_atlas(session)
+```
+
+- [ ] **Step 2: Run the atlas rebuild tests and verify they fail**
+
+Run:
+
+```bash
+uv run pytest tests/integration/test_atlas_projection.py tests/integration/test_admin_service.py -v
+```
+
+Expected:
+
+```text
+FAILED tests/integration/test_atlas_projection.py::test_rebuild_screenshot_atlas_persists_latest_published_run
+FAILED tests/integration/test_admin_service.py::test_rebuild_screenshot_atlas_refuses_active_screenshot_runs
+```
+
+- [ ] **Step 3: Implement atlas rebuild persistence and admin guard wiring**
+
+```python
+# src/memoria/atlas/projection.py
+def rebuild_screenshot_atlas(session: Session, *, force: bool = False) -> dict[str, object]:
+    if count_running_screenshot_pipeline_runs(session) > 0 and not force:
+        raise RuntimeError(
+            f"active screenshot pipeline runs: {count_running_screenshot_pipeline_runs(session)}"
+        )
+
+    latest_map_run = _load_latest_semantic_map_run(session)
+    if latest_map_run is None:
+        raise RuntimeError("semantic map run is required before atlas rebuild")
+
+    atlas_run = AtlasRun(
+        atlas_key="screenshots_atlas_v1",
+        source_family="screenshot",
+        status="completed",
+        source_count=len(latest_map_run.points),
+        source_snapshot_id=f"semantic-map-run:{latest_map_run.map_run_id}",
+        corpus_hash=_hash_source_ids(latest_map_run.source_item_ids),
+        embedding_type="screenshot_semantic_text",
+        embedding_model="hashed-text-v1",
+        embedding_version="hashed-text-v1",
+        clustering_method="semantic-map-plus-subregions-v1",
+        clustering_params_json=json.dumps({"subregion_cap": 8, "bridge_margin": 0.12}, sort_keys=True),
+        random_seed=42,
+        layout_version="atlas-world-v1",
+        completed_at=_utcnow(),
+        published_at=_utcnow(),
+    )
+    session.add(atlas_run)
+    session.flush()
+    _persist_regions(session, atlas_run_id=atlas_run.id, latest_map_run=latest_map_run)
+    _persist_edges(session, atlas_run_id=atlas_run.id, latest_map_run=latest_map_run)
+    _persist_items(session, atlas_run_id=atlas_run.id, latest_map_run=latest_map_run)
+    return {"atlas_run_id": atlas_run.id, "region_count": region_count, "item_count": item_count}
+```
 
 ```python
 # src/memoria/admin/service.py
-from memoria.atlas.projection import rebuild_screenshot_atlas_projection
-
-
 def rebuild_screenshot_atlas(session: Session, *, force: bool = False) -> dict[str, object]:
     active_runs = count_running_screenshot_pipeline_runs(session)
     if active_runs > 0 and not force:
         raise RuntimeError(f"active screenshot pipeline runs: {active_runs}")
-
-    result = rebuild_screenshot_atlas_projection(session, atlas_key="screenshots_atlas_v1")
-    reconcile_pipeline_runs(session)
-    return {
-        "atlas_run_id": result.atlas_run_id,
-        "edge_count": result.edge_count,
-        "item_count": result.item_count,
-        "published_at": result.published_at.isoformat(),
-        "region_count": result.region_count,
-        "subregion_count": result.subregion_count,
-    }
+    return atlas_projection.rebuild_screenshot_atlas(session, force=True)
 ```
 
 ```python
 # src/memoria/admin/cli.py
-atlas_parser = subparsers.add_parser("rebuild-screenshot-atlas")
-atlas_parser.add_argument("--force", action="store_true")
-
-elif args.command == "rebuild-screenshot-atlas":
-    payload = rebuild_screenshot_atlas(session, force=args.force)
-    session.commit()
+@app.command("rebuild-screenshot-atlas")
+def rebuild_screenshot_atlas_command(force: bool = False) -> None:
+    with Session(engine) as session:
+        payload = rebuild_screenshot_atlas(session, force=force)
+        session.commit()
+    print(json.dumps(payload, indent=2, sort_keys=True))
 ```
 
-- [ ] **Step 4: Re-run the admin service tests**
+- [ ] **Step 4: Run the rebuild and admin tests until they pass**
 
 Run:
 
 ```bash
-uv run pytest tests/integration/test_admin_service.py -v
+uv run pytest tests/integration/test_atlas_projection.py tests/integration/test_admin_service.py -v
 ```
 
 Expected:
 
 ```text
-PASSED
+PASSED tests/integration/test_atlas_projection.py::test_rebuild_screenshot_atlas_persists_latest_published_run
+PASSED tests/integration/test_admin_service.py::test_rebuild_screenshot_atlas_refuses_active_screenshot_runs
 ```
 
-- [ ] **Step 5: Commit the admin command**
-
-Run:
+- [ ] **Step 5: Commit rebuild persistence**
 
 ```bash
-git add src/memoria/admin/cli.py src/memoria/admin/service.py tests/integration/test_admin_service.py
-git commit -m "admin: add guarded screenshot atlas rebuild"
+git add src/memoria/atlas/projection.py src/memoria/admin/service.py src/memoria/admin/cli.py tests/integration/_screenshot_read_helpers.py tests/integration/test_atlas_projection.py tests/integration/test_admin_service.py
+git commit -m "feat: add atlas rebuild pipeline"
 ```
 
 ---
 
-### Task 5: Expose Atlas Read APIs And Response Models
+### Task 4: Expose Atlas Overview, Region Detail, And Evidence Slice APIs
 
 **Files:**
 - Create: `src/memoria/atlas/service.py`
 - Create: `src/memoria/api/atlas.py`
-- Create: `tests/integration/test_atlas_api.py`
-- Modify: `src/memoria/api/app.py`
 - Modify: `src/memoria/api/schemas.py`
+- Modify: `src/memoria/api/app.py`
+- Create: `tests/integration/test_atlas_api.py`
 
-- [ ] **Step 1: Add failing API tests for overview, region detail, and evidence slice**
+- [ ] **Step 1: Write failing API tests for overview, region detail, evidence slice, and HTML fallback**
 
 ```python
 # tests/integration/test_atlas_api.py
-from sqlalchemy.orm import Session
+def test_get_atlas_overview_returns_regions_and_filter_overlays(tmp_path):
+    client, engine = create_test_client(tmp_path, "atlas-overview.db")
+    seed_atlas_dataset(engine, tmp_path, rebuild_atlas=True)
 
-from memoria.atlas.projection import rebuild_screenshot_atlas_projection
-from tests.integration._screenshot_read_helpers import create_test_client
-from tests.integration._screenshot_read_helpers import seed_atlas_fixture
-
-
-def test_get_atlas_overview_returns_regions_edges_and_overlays(tmp_path):
-    client, engine = create_test_client(tmp_path, "atlas-api.db")
-    seed_atlas_fixture(engine, tmp_path)
-    with Session(engine) as session:
-        rebuild_screenshot_atlas_projection(session)
-        session.commit()
-
-    response = client.get("/atlas/overview", params={"q": "telegram"})
-    payload = response.json()
+    response = client.get("/atlas/overview", params={"app_hint": "telegram"})
 
     assert response.status_code == 200
-    assert payload["run"]["atlas_key"] == "screenshots_atlas_v1"
+    payload = response.json()
+    assert payload["atlas_run"]["atlas_key"] == "screenshots_atlas_v1"
     assert payload["regions"]
-    assert "region_overlays" in payload
+    assert "match_count" in payload["regions"][0]["overlay"]
 
 
 def test_get_atlas_region_detail_returns_subregions_and_representatives(tmp_path):
-    client, engine = create_test_client(tmp_path, "atlas-region-detail.db")
-    seed_atlas_fixture(engine, tmp_path)
-    with Session(engine) as session:
-        rebuild_screenshot_atlas_projection(session)
-        session.commit()
-
-    overview = client.get("/atlas/overview").json()
-    region_key = overview["regions"][0]["region_key"]
-
     response = client.get(f"/atlas/regions/{region_key}")
-    payload = response.json()
-
     assert response.status_code == 200
-    assert payload["region"]["region_key"] == region_key
-    assert payload["subregions"]
-    assert payload["representatives"]
+    assert response.json()["subregions"]
+    assert response.json()["representatives"]
 
 
 def test_get_atlas_evidence_slice_splits_representatives_bridges_and_long_tail(tmp_path):
-    client, engine = create_test_client(tmp_path, "atlas-evidence.db")
-    seed_atlas_fixture(engine, tmp_path)
-    with Session(engine) as session:
-        rebuild_screenshot_atlas_projection(session)
-        session.commit()
-
-    overview = client.get("/atlas/overview").json()
-    region_key = overview["regions"][0]["region_key"]
-
-    response = client.get(f"/atlas/regions/{region_key}/evidence")
-    payload = response.json()
-
+    response = client.get("/atlas/evidence", params={"region_key": region_key, "limit": 5, "offset": 0})
     assert response.status_code == 200
-    assert "representatives" in payload
-    assert "bridges" in payload
-    assert "long_tail_page" in payload
+    payload = response.json()
+    assert payload["representatives"]
+    assert "items" in payload["long_tail_page"]
+
+
+def test_get_atlas_page_returns_fallback_html_when_frontend_build_is_missing(tmp_path):
+    response = client.get("/atlas")
+    assert response.status_code == 200
+    assert "Semantic Atlas frontend build is not present" in response.text
 ```
 
 - [ ] **Step 2: Run the atlas API tests and verify they fail**
@@ -988,41 +632,140 @@ Run:
 uv run pytest tests/integration/test_atlas_api.py -v
 ```
 
-Expected: FAIL because `/atlas/*` JSON endpoints do not exist.
+Expected:
 
-- [ ] **Step 3: Implement atlas contracts, read service, and router**
+```text
+FAILED tests/integration/test_atlas_api.py
+```
+
+- [ ] **Step 3: Implement the atlas read service and HTTP surface**
+
+```python
+# src/memoria/atlas/service.py
+def get_atlas_overview(
+    session: Session,
+    *,
+    filters: ScreenshotReadFilters,
+) -> AtlasOverview:
+    atlas_run = _get_latest_published_run(session)
+    regions = _load_regions(session, atlas_run_id=atlas_run.id, level=0)
+    overlays = _build_region_overlays(session, atlas_run_id=atlas_run.id, filters=filters)
+    return AtlasOverview(atlas_run=atlas_run, regions=_attach_overlays(regions, overlays))
+
+
+def get_atlas_region_detail(
+    session: Session,
+    *,
+    region_key: str,
+    filters: ScreenshotReadFilters,
+) -> AtlasRegionDetail | None:
+    atlas_run = _get_latest_published_run(session)
+    region = _load_region(session, atlas_run_id=atlas_run.id, region_key=region_key)
+    if region is None:
+        return None
+    subregions = _load_regions(session, atlas_run_id=atlas_run.id, parent_region_key=region_key)
+    representatives = _load_item_group(
+        session,
+        atlas_run_id=atlas_run.id,
+        region_key=region_key,
+        subregion_key=None,
+        representative_only=True,
+        bridge_only=False,
+        limit=6,
+        offset=0,
+        filters=filters,
+    )
+    return AtlasRegionDetail(region=region, subregions=subregions, representatives=representatives)
+```
+
+```python
+# src/memoria/api/atlas.py
+@router.get("/atlas/overview", response_model=AtlasOverviewResponse)
+def get_atlas_overview_endpoint(
+    app_hint: str | None = Query(None),
+    screen_category: str | None = Query(None),
+    connector_instance_id: str | None = Query(None),
+    has_knowledge: bool | None = Query(None),
+    observed_from: datetime | None = Query(None),
+    observed_to: datetime | None = Query(None),
+):
+    filters = ScreenshotReadFilters(
+        connector_instance_id=connector_instance_id,
+        app_hint=app_hint,
+        screen_category=screen_category,
+        has_knowledge=has_knowledge,
+        observed_from=observed_from,
+        observed_to=observed_to,
+    )
+    with Session(engine) as session:
+        result = atlas_service.get_atlas_overview(session, filters=filters)
+    return asdict(result)
+
+
+@router.get("/atlas/regions/{region_key}", response_model=AtlasRegionDetailResponse)
+def get_atlas_region_detail_endpoint(
+    region_key: str,
+    app_hint: str | None = Query(None),
+    screen_category: str | None = Query(None),
+    connector_instance_id: str | None = Query(None),
+    has_knowledge: bool | None = Query(None),
+    observed_from: datetime | None = Query(None),
+    observed_to: datetime | None = Query(None),
+):
+    filters = ScreenshotReadFilters(
+        connector_instance_id=connector_instance_id,
+        app_hint=app_hint,
+        screen_category=screen_category,
+        has_knowledge=has_knowledge,
+        observed_from=observed_from,
+        observed_to=observed_to,
+    )
+    with Session(engine) as session:
+        result = atlas_service.get_atlas_region_detail(session, region_key=region_key, filters=filters)
+    if result is None:
+        raise HTTPException(status_code=404, detail="atlas region not found")
+    return asdict(result)
+
+
+@router.get("/atlas/evidence", response_model=AtlasEvidenceSliceResponse)
+def get_atlas_evidence_slice_endpoint(
+    region_key: str,
+    subregion_key: str | None = Query(None),
+    sort: str = Query("representatives"),
+    limit: int = Query(25, ge=1, le=100),
+    offset: int = Query(0, ge=0),
+    app_hint: str | None = Query(None),
+    screen_category: str | None = Query(None),
+    connector_instance_id: str | None = Query(None),
+    has_knowledge: bool | None = Query(None),
+    observed_from: datetime | None = Query(None),
+    observed_to: datetime | None = Query(None),
+):
+    filters = ScreenshotReadFilters(
+        connector_instance_id=connector_instance_id,
+        app_hint=app_hint,
+        screen_category=screen_category,
+        has_knowledge=has_knowledge,
+        observed_from=observed_from,
+        observed_to=observed_to,
+    )
+    with Session(engine) as session:
+        result = atlas_service.get_atlas_evidence_slice(
+            session,
+            region_key=region_key,
+            subregion_key=subregion_key,
+            sort=sort,
+            limit=limit,
+            offset=offset,
+            filters=filters,
+        )
+    return asdict(result)
+```
 
 ```python
 # src/memoria/api/schemas.py
-class AtlasRunResponse(BaseModel):
-    atlas_run_id: int
-    atlas_key: str
-    status: str
-    generated_at: datetime
-    completed_at: datetime | None
-    published_at: datetime | None
-    source_count: int
-    layout_version: str
-    embedding_type: str
-    embedding_model: str
-    embedding_version: str
-    clustering_method: str
-    random_seed: int
-
-
-class AtlasRegionOverlayResponse(BaseModel):
-    region_key: str
+class AtlasOverlayResponse(BaseModel):
     match_count: int
-
-
-class AtlasShapePointResponse(BaseModel):
-    x: float
-    y: float
-
-
-class AtlasRegionShapeResponse(BaseModel):
-    kind: str
-    polygons: list[list[AtlasShapePointResponse]]
 
 
 class AtlasRegionResponse(BaseModel):
@@ -1033,133 +776,27 @@ class AtlasRegionResponse(BaseModel):
     title: str
     x: float
     y: float
-    region_shape: AtlasRegionShapeResponse
+    label_x: float
+    label_y: float
+    region_shape: dict[str, Any]
     item_count: int
     top_labels: list[str]
     top_apps: list[str]
     top_people: list[str]
     top_entities: list[str]
-    time_start: datetime | None
-    time_end: datetime | None
-    cohesion_score: float
-
-
-class AtlasItemResponse(BaseModel):
-    atlas_run_id: int
-    source_item_id: int
-    region_key: str
-    subregion_key: str | None
-    x: float
-    y: float
-    semantic_summary: str | None
-    app_hint: str | None
-    observed_at: datetime | None
-    object_refs: list[str]
-    is_representative: bool
-    representative_rank: int | None
-    is_bridge: bool
-    bridge_type: str | None
-    secondary_region_key: str | None
-    bridge_score: float | None
-    screenshot_detail_url: str
-
-
-class AtlasEvidenceSectionResponse(BaseModel):
-    total_count: int
-    items: list[AtlasItemResponse]
-
-
-class AtlasItemPageResponse(BaseModel):
-    total_count: int
-    offset: int
-    limit: int
-    items: list[AtlasItemResponse]
-
-
-class AtlasOverviewResponse(BaseModel):
-    run: AtlasRunResponse
-    regions: list[AtlasRegionResponse]
-    region_overlays: list[AtlasRegionOverlayResponse]
-    edges: list[dict[str, object]]
-    active_filters: dict[str, object]
-
-
-class AtlasRegionDetailResponse(BaseModel):
-    run: AtlasRunResponse
-    region: AtlasRegionResponse
-    region_overlay: AtlasRegionOverlayResponse
-    subregions: list[AtlasRegionResponse]
-    subregion_overlays: list[AtlasRegionOverlayResponse]
-    representatives: list[AtlasItemResponse]
-    active_filters: dict[str, object]
-
-
-class AtlasEvidenceSliceResponse(BaseModel):
-    run: AtlasRunResponse
-    active_region_key: str
-    active_subregion_key: str | None
-    representatives: AtlasEvidenceSectionResponse
-    bridges: AtlasEvidenceSectionResponse
-    long_tail_page: AtlasItemPageResponse
-    active_filters: dict[str, object]
+    overlay: AtlasOverlayResponse
 ```
 
-```python
-# src/memoria/api/atlas.py
-from fastapi import APIRouter
-from fastapi import HTTPException
-from sqlalchemy.engine import Engine
-from sqlalchemy.orm import Session
-
-from memoria.atlas.service import AtlasFilters
-from memoria.atlas.service import get_atlas_evidence_slice
-from memoria.atlas.service import get_atlas_overview
-from memoria.atlas.service import get_atlas_region_detail
-
-
-def create_atlas_router(*, engine: Engine) -> APIRouter:
-    router = APIRouter()
-
-    @router.get("/atlas/overview", response_model=AtlasOverviewResponse)
-    def atlas_overview_endpoint(q: str | None = None, app_hint: str | None = None, topic_slug: str | None = None, person_slug: str | None = None, observed_from: datetime | None = None, observed_to: datetime | None = None) -> dict[str, object]:
-        filters = AtlasFilters(q=q, app_hint=app_hint, topic_slug=topic_slug, person_slug=person_slug, observed_from=observed_from, observed_to=observed_to)
-        with Session(engine) as session:
-            return get_atlas_overview(session, filters=filters)
-
-    @router.get("/atlas/regions/{region_key}", response_model=AtlasRegionDetailResponse)
-    def atlas_region_detail_endpoint(region_key: str, q: str | None = None) -> dict[str, object]:
-        with Session(engine) as session:
-            payload = get_atlas_region_detail(session, region_key=region_key, filters=AtlasFilters(q=q))
-        if payload is None:
-            raise HTTPException(status_code=404, detail="atlas region not found")
-        return payload
-
-    @router.get("/atlas/regions/{region_key}/evidence", response_model=AtlasEvidenceSliceResponse)
-    def atlas_evidence_endpoint(region_key: str, subregion_key: str | None = None, q: str | None = None, offset: int = 0, limit: int = 50) -> dict[str, object]:
-        with Session(engine) as session:
-            payload = get_atlas_evidence_slice(
-                session,
-                region_key=region_key,
-                subregion_key=subregion_key,
-                filters=AtlasFilters(q=q),
-                offset=offset,
-                limit=limit,
-            )
-        if payload is None:
-            raise HTTPException(status_code=404, detail="atlas region not found")
-        return payload
-
-    return router
-```
+- [ ] **Step 4: Register the atlas router in the app**
 
 ```python
 # src/memoria/api/app.py
 from memoria.api.atlas import create_atlas_router
 
-app.include_router(create_atlas_router(engine=engine))
+app.include_router(create_atlas_router(engine=engine, frontend_dist_dir=Path("frontend/atlas/dist")))
 ```
 
-- [ ] **Step 4: Run the atlas API tests**
+- [ ] **Step 5: Run the atlas API tests until they pass**
 
 Run:
 
@@ -1170,39 +807,81 @@ uv run pytest tests/integration/test_atlas_api.py -v
 Expected:
 
 ```text
-PASSED
+4 passed
 ```
 
-- [ ] **Step 5: Commit the atlas backend API**
-
-Run:
+- [ ] **Step 6: Commit the atlas HTTP layer**
 
 ```bash
 git add src/memoria/atlas/service.py src/memoria/api/atlas.py src/memoria/api/app.py src/memoria/api/schemas.py tests/integration/test_atlas_api.py
-git commit -m "api: add atlas read endpoints"
+git commit -m "feat: add atlas read api"
 ```
 
 ---
 
-### Task 6: Scaffold The Frontend Workspace And Ignore Local Build Artifacts
+### Task 5: Scaffold The Atlas Frontend Workspace And State Machine
 
 **Files:**
 - Create: `frontend/atlas/package.json`
+- Create: `frontend/atlas/package-lock.json`
 - Create: `frontend/atlas/tsconfig.json`
 - Create: `frontend/atlas/vite.config.ts`
 - Create: `frontend/atlas/index.html`
 - Create: `frontend/atlas/src/main.tsx`
 - Create: `frontend/atlas/src/App.tsx`
 - Create: `frontend/atlas/src/styles.css`
+- Create: `frontend/atlas/src/api/contracts.ts`
+- Create: `frontend/atlas/src/api/client.ts`
+- Create: `frontend/atlas/src/state/atlasReducer.ts`
+- Create: `frontend/atlas/src/state/atlasReducer.test.ts`
+- Create: `frontend/atlas/src/lib/evidenceSections.ts`
+- Create: `frontend/atlas/src/lib/evidenceSections.test.ts`
 - Modify: `.gitignore`
 
-- [ ] **Step 1: Add frontend ignores and the Vite workspace files**
+- [ ] **Step 1: Add failing frontend tests for state transitions and evidence sectioning**
 
-```gitignore
-# .gitignore
-frontend/atlas/node_modules/
-frontend/atlas/dist/
+```ts
+// frontend/atlas/src/state/atlasReducer.test.ts
+it("selects on single click and drills down only on explicit action", () => {
+  const selected = atlasReducer(initialState, { type: "region.selected", regionKey: "region-a" });
+  expect(selected.level).toBe("overview");
+  const drilled = atlasReducer(selected, { type: "region.drilled", regionKey: "region-a" });
+  expect(drilled.level).toBe("region");
+});
 ```
+
+```ts
+// frontend/atlas/src/lib/evidenceSections.test.ts
+it("keeps representatives and bridges out of long tail pagination", () => {
+  const sections = splitEvidenceSections({
+    representatives: [{ source_item_id: 1 }],
+    bridges: [{ source_item_id: 2 }],
+    long_tail_page: { items: [{ source_item_id: 3 }], limit: 1, offset: 0, total: 1 },
+  });
+  expect(sections.representatives).toHaveLength(1);
+  expect(sections.bridges).toHaveLength(1);
+  expect(sections.longTail.items).toHaveLength(1);
+});
+```
+
+- [ ] **Step 2: Create the frontend workspace and install dependencies**
+
+Run:
+
+```bash
+mkdir -p frontend/atlas/src/api frontend/atlas/src/state frontend/atlas/src/lib frontend/atlas/src/components frontend/atlas/src/canvas
+cd frontend/atlas
+npm install react react-dom pixi.js @tanstack/react-virtual d3-scale
+npm install -D typescript vite vitest @vitejs/plugin-react @types/react @types/react-dom jsdom
+```
+
+Expected:
+
+```text
+added packages
+```
+
+- [ ] **Step 3: Implement the workspace scaffold and pure state layer**
 
 ```json
 // frontend/atlas/package.json
@@ -1214,655 +893,279 @@ frontend/atlas/dist/
     "dev": "vite",
     "build": "vite build",
     "test": "vitest run"
-  },
-  "dependencies": {
-    "@tanstack/react-virtual": "^3.13.12",
-    "d3-array": "^3.2.4",
-    "d3-polygon": "^3.0.1",
-    "d3-scale": "^4.0.2",
-    "pixi.js": "^8.10.1",
-    "react": "^19.1.0",
-    "react-dom": "^19.1.0"
-  },
-  "devDependencies": {
-    "@types/react": "^19.1.10",
-    "@types/react-dom": "^19.1.7",
-    "@vitejs/plugin-react": "^5.0.0",
-    "typescript": "^5.9.2",
-    "vite": "^7.1.3",
-    "vitest": "^3.2.4"
   }
 }
 ```
 
-```tsx
-// frontend/atlas/src/App.tsx
-export function App() {
-  return (
-    <main className="app-shell">
-      <section className="atlas-panel">Semantic Atlas loading…</section>
-      <aside className="dock-panel">Atlas workbench</aside>
-    </main>
-  );
-}
-```
-
-- [ ] **Step 2: Install the frontend dependencies**
-
-Run:
-
-```bash
-npm --prefix frontend/atlas install
-```
-
-Expected: `package-lock.json` is created under `frontend/atlas/`.
-
-- [ ] **Step 3: Build the empty scaffold and verify the toolchain works**
-
-Run:
-
-```bash
-npm --prefix frontend/atlas run build
-```
-
-Expected:
-
-```text
-vite v
-✓ built in
-```
-
-- [ ] **Step 4: Verify the Python suite still passes after adding the workspace**
-
-Run:
-
-```bash
-uv run pytest tests/integration/test_schema_tables.py tests/integration/test_atlas_api.py -v
-```
-
-Expected:
-
-```text
-PASSED
-```
-
-- [ ] **Step 5: Commit the frontend scaffold**
-
-Run:
-
-```bash
-git add .gitignore frontend/atlas/package.json frontend/atlas/package-lock.json frontend/atlas/tsconfig.json frontend/atlas/vite.config.ts frontend/atlas/index.html frontend/atlas/src/main.tsx frontend/atlas/src/App.tsx frontend/atlas/src/styles.css
-git commit -m "feat: scaffold semantic atlas frontend workspace"
-```
-
----
-
-### Task 7: Implement Level-0 Atlas Overview State, Filters, And Page Hosting
-
-**Files:**
-- Create: `frontend/atlas/src/api/contracts.ts`
-- Create: `frontend/atlas/src/api/client.ts`
-- Create: `frontend/atlas/src/state/atlasReducer.ts`
-- Create: `frontend/atlas/src/state/atlasReducer.test.ts`
-- Create: `frontend/atlas/src/components/AtlasToolbar.tsx`
-- Create: `frontend/atlas/src/components/InsightDock.tsx`
-- Create: `frontend/atlas/src/canvas/AtlasCanvas.tsx`
-- Modify: `src/memoria/api/app.py`
-- Modify: `src/memoria/api/atlas.py`
-- Modify: `frontend/atlas/src/App.tsx`
-- Modify: `frontend/atlas/src/styles.css`
-- Modify: `tests/integration/test_atlas_api.py`
-
-- [ ] **Step 1: Add failing tests for state transitions and atlas page hosting**
-
-```ts
-// frontend/atlas/src/state/atlasReducer.test.ts
-import { describe, expect, it } from "vitest";
-
-import { atlasReducer, initialAtlasState } from "./atlasReducer";
-
-
-describe("atlasReducer", () => {
-  it("keeps selection separate from drill-down", () => {
-    const selected = atlasReducer(initialAtlasState, { type: "region-selected", regionKey: "region-telegram" });
-    expect(selected.level).toBe(0);
-    expect(selected.selectedRegionKey).toBe("region-telegram");
-
-    const drilled = atlasReducer(selected, { type: "region-drilled" });
-    expect(drilled.level).toBe(1);
-  });
-});
-```
-
-```python
-# tests/integration/test_atlas_api.py
-from fastapi.testclient import TestClient
-
-from memoria.api.app import create_app
-
-def test_atlas_page_returns_build_missing_fallback_when_no_frontend_dist(tmp_path):
-    app = create_app(database_url=f"sqlite:///{tmp_path / 'atlas.db'}", blob_dir=tmp_path / "blobs", atlas_frontend_dist=tmp_path / "missing-dist")
-    client = TestClient(app)
-
-    response = client.get("/atlas")
-
-    assert response.status_code == 200
-    assert "frontend build missing" in response.text.lower()
-```
-
-- [ ] **Step 2: Run the new tests and verify they fail**
-
-Run:
-
-```bash
-npm --prefix frontend/atlas run test
-uv run pytest tests/integration/test_atlas_api.py::test_atlas_page_returns_build_missing_fallback_when_no_frontend_dist -v
-```
-
-Expected: FAIL because the reducer does not exist and `/atlas` page hosting is not implemented.
-
-- [ ] **Step 3: Implement the level-0 state machine, API client, toolbar, dock, Pixi host, and atlas page route**
-
 ```ts
 // frontend/atlas/src/state/atlasReducer.ts
-export type AtlasLevel = 0 | 1 | 2;
+export type AtlasLevel = "overview" | "region" | "evidence";
 
 export type AtlasState = {
   level: AtlasLevel;
   selectedRegionKey: string | null;
   selectedSubregionKey: string | null;
   selectedItemId: number | null;
-  query: string;
-  appHint: string;
 };
-
-export const initialAtlasState: AtlasState = {
-  level: 0,
-  selectedRegionKey: null,
-  selectedSubregionKey: null,
-  selectedItemId: null,
-  query: "",
-  appHint: "",
-};
-
-export type AtlasAction =
-  | { type: "region-selected"; regionKey: string }
-  | { type: "region-drilled" }
-  | { type: "query-updated"; query: string }
-  | { type: "app-hint-updated"; appHint: string };
 
 export function atlasReducer(state: AtlasState, action: AtlasAction): AtlasState {
   switch (action.type) {
-    case "region-selected":
+    case "region.selected":
       return { ...state, selectedRegionKey: action.regionKey, selectedSubregionKey: null, selectedItemId: null };
-    case "region-drilled":
-      return state.selectedRegionKey ? { ...state, level: 1 } : state;
-    case "query-updated":
-      return { ...state, query: action.query };
-    case "app-hint-updated":
-      return { ...state, appHint: action.appHint };
-    default:
-      return state;
+    case "region.drilled":
+      return { ...state, level: "region", selectedRegionKey: action.regionKey, selectedSubregionKey: null, selectedItemId: null };
+    case "subregion.selected":
+      return { ...state, selectedSubregionKey: action.subregionKey, selectedItemId: null };
+    case "subregion.drilled":
+      return { ...state, level: "evidence", selectedSubregionKey: action.subregionKey, selectedItemId: null };
+    case "item.selected":
+      return { ...state, selectedItemId: action.sourceItemId };
+    case "breadcrumbs.reset":
+      return { level: "overview", selectedRegionKey: null, selectedSubregionKey: null, selectedItemId: null };
   }
 }
 ```
 
-```tsx
-// frontend/atlas/src/App.tsx
-import { useEffect, useReducer, useState } from "react";
-
-import { fetchAtlasOverview } from "./api/client";
-import { AtlasCanvas } from "./canvas/AtlasCanvas";
-import { AtlasToolbar } from "./components/AtlasToolbar";
-import { InsightDock } from "./components/InsightDock";
-import { atlasReducer, initialAtlasState } from "./state/atlasReducer";
-
-
-export function App() {
-  const [state, dispatch] = useReducer(atlasReducer, initialAtlasState);
-  const [overview, setOverview] = useState(null);
-
-  useEffect(() => {
-    fetchAtlasOverview({ q: state.query, app_hint: state.appHint }).then(setOverview);
-  }, [state.query, state.appHint]);
-
-  return (
-    <main className="app-shell">
-      <section className="atlas-panel">
-        <AtlasToolbar
-          query={state.query}
-          appHint={state.appHint}
-          onQueryChange={(query) => dispatch({ type: "query-updated", query })}
-          onAppHintChange={(appHint) => dispatch({ type: "app-hint-updated", appHint })}
-        />
-        <AtlasCanvas
-          level={state.level}
-          overview={overview}
-          selectedRegionKey={state.selectedRegionKey}
-          onRegionSelect={(regionKey) => dispatch({ type: "region-selected", regionKey })}
-        />
-      </section>
-      <InsightDock
-        level={state.level}
-        overview={overview}
-        selectedRegionKey={state.selectedRegionKey}
-        onDrillDown={() => dispatch({ type: "region-drilled" })}
-      />
-    </main>
-  );
-}
-```
-
-```python
-# src/memoria/api/atlas.py
-from fastapi.responses import FileResponse
-from fastapi.responses import HTMLResponse
-from pathlib import Path
-
-
-def create_atlas_router(*, engine: Engine, frontend_dist: Path | None = None) -> APIRouter:
-    router = APIRouter()
-    resolved_frontend_dist = frontend_dist
-
-    @router.get("/atlas", response_class=HTMLResponse)
-    def atlas_page() -> HTMLResponse | FileResponse:
-        if resolved_frontend_dist is None or not (resolved_frontend_dist / "index.html").exists():
-            return HTMLResponse("<!doctype html><html><body><p>Atlas frontend build missing.</p></body></html>")
-        return FileResponse(resolved_frontend_dist / "index.html")
-```
-
-```python
-# src/memoria/api/app.py
-from fastapi.staticfiles import StaticFiles
-
-
-def create_app(
-    *,
-    database_url: str | None = None,
-    blob_dir: Path,
-    runtime_settings: RuntimeSettings | None = None,
-    ocr_engine: OcrEngine | None = None,
-    vision_engine: VisionEngine | None = None,
-    atlas_frontend_dist: Path | None = None,
-) -> FastAPI:
-    app.include_router(create_atlas_router(engine=engine, frontend_dist=atlas_frontend_dist))
-    if atlas_frontend_dist is not None and (atlas_frontend_dist / "assets").exists():
-        app.mount("/atlas/assets", StaticFiles(directory=atlas_frontend_dist / "assets"), name="atlas-assets")
-```
-
-- [ ] **Step 4: Run the frontend tests, atlas page test, and build**
+- [ ] **Step 4: Run the frontend unit tests**
 
 Run:
 
 ```bash
-npm --prefix frontend/atlas run test
-npm --prefix frontend/atlas run build
-uv run pytest tests/integration/test_atlas_api.py -v
+cd frontend/atlas
+npm run test
 ```
 
 Expected:
 
 ```text
-PASSED
+2 passed
 ```
 
-- [ ] **Step 5: Commit the level-0 atlas shell**
-
-Run:
+- [ ] **Step 5: Commit the frontend scaffold**
 
 ```bash
-git add frontend/atlas/src/api/contracts.ts frontend/atlas/src/api/client.ts frontend/atlas/src/state/atlasReducer.ts frontend/atlas/src/state/atlasReducer.test.ts frontend/atlas/src/components/AtlasToolbar.tsx frontend/atlas/src/components/InsightDock.tsx frontend/atlas/src/canvas/AtlasCanvas.tsx frontend/atlas/src/App.tsx frontend/atlas/src/styles.css src/memoria/api/app.py src/memoria/api/atlas.py tests/integration/test_atlas_api.py
-git commit -m "feat: add atlas overview ui shell"
+git add .gitignore frontend/atlas/package.json frontend/atlas/package-lock.json frontend/atlas/tsconfig.json frontend/atlas/vite.config.ts frontend/atlas/index.html frontend/atlas/src/main.tsx frontend/atlas/src/App.tsx frontend/atlas/src/styles.css frontend/atlas/src/api/contracts.ts frontend/atlas/src/api/client.ts frontend/atlas/src/state/atlasReducer.ts frontend/atlas/src/state/atlasReducer.test.ts frontend/atlas/src/lib/evidenceSections.ts frontend/atlas/src/lib/evidenceSections.test.ts
+git commit -m "feat: scaffold atlas frontend workspace"
 ```
 
 ---
 
-### Task 8: Implement Region Focus, Evidence Focus, And Virtualized Evidence Sections
+### Task 6: Build The Atlas Workbench UI And Serve The Built Frontend
 
 **Files:**
-- Create: `frontend/atlas/src/lib/evidenceSections.ts`
-- Create: `frontend/atlas/src/lib/evidenceSections.test.ts`
+- Create: `frontend/atlas/src/canvas/AtlasCanvas.tsx`
+- Create: `frontend/atlas/src/components/AtlasToolbar.tsx`
+- Create: `frontend/atlas/src/components/InsightDock.tsx`
 - Create: `frontend/atlas/src/components/RegionNavigator.tsx`
 - Create: `frontend/atlas/src/components/EvidenceList.tsx`
 - Modify: `frontend/atlas/src/App.tsx`
-- Modify: `frontend/atlas/src/canvas/AtlasCanvas.tsx`
-- Modify: `frontend/atlas/src/components/InsightDock.tsx`
-- Modify: `frontend/atlas/src/state/atlasReducer.ts`
+- Modify: `frontend/atlas/src/styles.css`
+- Modify: `src/memoria/api/atlas.py`
 
-- [ ] **Step 1: Add failing tests for evidence grouping and subregion drill-down**
-
-```ts
-// frontend/atlas/src/lib/evidenceSections.test.ts
-import { describe, expect, it } from "vitest";
-
-import { buildEvidenceSections } from "./evidenceSections";
-
-
-describe("buildEvidenceSections", () => {
-  it("keeps representatives and bridges out of long tail", () => {
-    const sections = buildEvidenceSections({
-      representatives: [{ source_item_id: 1 }],
-      bridges: [{ source_item_id: 2 }],
-      longTailPage: { items: [{ source_item_id: 1 }, { source_item_id: 2 }, { source_item_id: 3 }] },
-    });
-
-    expect(sections.longTail.items.map((item) => item.source_item_id)).toEqual([3]);
-  });
-});
-```
-
-```ts
-// frontend/atlas/src/state/atlasReducer.test.ts
-it("requires explicit drill-down for subregions as well", () => {
-  const levelOne = {
-    ...initialAtlasState,
-    level: 1 as const,
-    selectedRegionKey: "region-telegram",
-  };
-  const selected = atlasReducer(levelOne, { type: "subregion-selected", subregionKey: "sub-bookings" });
-  expect(selected.level).toBe(1);
-  const drilled = atlasReducer(selected, { type: "subregion-drilled" });
-  expect(drilled.level).toBe(2);
-});
-```
-
-- [ ] **Step 2: Run the frontend tests and verify they fail**
-
-Run:
-
-```bash
-npm --prefix frontend/atlas run test
-```
-
-Expected: FAIL because `buildEvidenceSections` and subregion drill-down actions are missing.
-
-- [ ] **Step 3: Implement evidence grouping, deeper reducer actions, and dock/canvas components**
-
-```ts
-// frontend/atlas/src/lib/evidenceSections.ts
-export function buildEvidenceSections(input: {
-  representatives: Array<{ source_item_id: number }>;
-  bridges: Array<{ source_item_id: number }>;
-  longTailPage: { items: Array<{ source_item_id: number }> };
-}) {
-  const excluded = new Set([
-    ...input.representatives.map((item) => item.source_item_id),
-    ...input.bridges.map((item) => item.source_item_id),
-  ]);
-
-  return {
-    representatives: { items: input.representatives },
-    bridges: { items: input.bridges },
-    longTail: {
-      items: input.longTailPage.items.filter((item) => !excluded.has(item.source_item_id)),
-    },
-  };
-}
-```
-
-```ts
-// frontend/atlas/src/state/atlasReducer.ts
-export type AtlasAction =
-  | { type: "region-selected"; regionKey: string }
-  | { type: "region-drilled" }
-  | { type: "subregion-selected"; subregionKey: string }
-  | { type: "subregion-drilled" }
-  | { type: "item-selected"; sourceItemId: number }
-  | { type: "navigate-up"; level: 0 | 1 }
-  | { type: "query-updated"; query: string }
-  | { type: "app-hint-updated"; appHint: string };
-
-export function atlasReducer(state: AtlasState, action: AtlasAction): AtlasState {
-  switch (action.type) {
-    case "region-selected":
-      return { ...state, selectedRegionKey: action.regionKey, selectedSubregionKey: null, selectedItemId: null };
-    case "region-drilled":
-      return state.selectedRegionKey ? { ...state, level: 1 } : state;
-    case "subregion-selected":
-      return { ...state, selectedSubregionKey: action.subregionKey, selectedItemId: null };
-    case "subregion-drilled":
-      return state.selectedSubregionKey ? { ...state, level: 2 } : state;
-    case "item-selected":
-      return { ...state, selectedItemId: action.sourceItemId };
-    case "navigate-up":
-      return action.level === 0
-        ? { ...state, level: 0, selectedSubregionKey: null, selectedItemId: null }
-        : { ...state, level: 1, selectedItemId: null };
-    case "query-updated":
-      return { ...state, query: action.query };
-    case "app-hint-updated":
-      return { ...state, appHint: action.appHint };
-    default:
-      return state;
-  }
-}
-```
+- [ ] **Step 1: Add the Pixi canvas, persistent dock, and virtualized evidence list**
 
 ```tsx
-// frontend/atlas/src/components/EvidenceList.tsx
-import { useVirtualizer } from "@tanstack/react-virtual";
-import { useRef } from "react";
-
-
-export function EvidenceList({ representatives, bridges, longTail, onSelectItem }) {
-  const parentRef = useRef<HTMLDivElement | null>(null);
-  const virtualizer = useVirtualizer({
-    count: longTail.length,
-    getScrollElement: () => parentRef.current,
-    estimateSize: () => 80,
-  });
+// frontend/atlas/src/App.tsx
+export default function App() {
+  const [state, dispatch] = useReducer(atlasReducer, initialState);
+  const overview = useAtlasOverview(filters);
+  const regionDetail = useAtlasRegion(state.selectedRegionKey, filters);
+  const evidence = useAtlasEvidence(state.selectedRegionKey, state.selectedSubregionKey, filters, pagination);
 
   return (
-    <div className="evidence-list">
-      <section>
-        <h3>Representatives</h3>
-        {representatives.map((item) => (
-          <button key={item.source_item_id} onClick={() => onSelectItem(item.source_item_id)}>
-            {item.semantic_summary}
-          </button>
-        ))}
+    <div className="atlas-shell">
+      <section className="atlas-stage">
+        <AtlasToolbar filters={filters} onFiltersChange={setFilters} />
+        <AtlasCanvas
+          level={state.level}
+          overview={overview}
+          regionDetail={regionDetail}
+          evidence={evidence}
+          onRegionSelect={(regionKey) => dispatch({ type: "region.selected", regionKey })}
+          onRegionDrill={(regionKey) => dispatch({ type: "region.drilled", regionKey })}
+          onSubregionSelect={(subregionKey) => dispatch({ type: "subregion.selected", subregionKey })}
+          onSubregionDrill={(subregionKey) => dispatch({ type: "subregion.drilled", subregionKey })}
+          onItemSelect={(sourceItemId) => dispatch({ type: "item.selected", sourceItemId })}
+        />
       </section>
-      <section>
-        <h3>Bridges</h3>
-        {bridges.map((item) => (
-          <button key={item.source_item_id} onClick={() => onSelectItem(item.source_item_id)}>
-            {item.semantic_summary}
-          </button>
-        ))}
-      </section>
-      <section>
-        <h3>All Items</h3>
-        <div ref={parentRef} className="virtual-list">
-          <div style={{ height: `${virtualizer.getTotalSize()}px`, position: "relative" }}>
-            {virtualizer.getVirtualItems().map((virtualRow) => {
-              const item = longTail[virtualRow.index];
-              return (
-                <button
-                  key={item.source_item_id}
-                  className="evidence-row"
-                  onClick={() => onSelectItem(item.source_item_id)}
-                  style={{ position: "absolute", transform: `translateY(${virtualRow.start}px)` }}
-                >
-                  {item.semantic_summary}
-                </button>
-              );
-            })}
-          </div>
-        </div>
-      </section>
+      <InsightDock
+        state={state}
+        overview={overview}
+        regionDetail={regionDetail}
+        evidence={evidence}
+        onReset={() => dispatch({ type: "breadcrumbs.reset" })}
+      />
     </div>
   );
 }
 ```
 
 ```tsx
-// frontend/atlas/src/components/InsightDock.tsx
-import { EvidenceList } from "./EvidenceList";
-import { RegionNavigator } from "./RegionNavigator";
-
-
-export function InsightDock({ level, regionDetail, evidenceSlice, onRegionDrillDown, onSubregionDrillDown, onSelectItem, onNavigateUp }) {
+// frontend/atlas/src/components/EvidenceList.tsx
+export function EvidenceList({ slice, onSelect }: EvidenceListProps) {
+  const rowVirtualizer = useVirtualizer({
+    count: slice.longTailPage.items.length,
+    getScrollElement: () => containerRef.current,
+    estimateSize: () => 72,
+  });
   return (
-    <aside className="dock-panel">
-      <RegionNavigator level={level} regionDetail={regionDetail} onRegionDrillDown={onRegionDrillDown} onSubregionDrillDown={onSubregionDrillDown} onNavigateUp={onNavigateUp} />
-      {level === 2 && evidenceSlice ? (
-        <EvidenceList
-          representatives={evidenceSlice.representatives.items}
-          bridges={evidenceSlice.bridges.items}
-          longTail={evidenceSlice.long_tail_page.items}
-          onSelectItem={onSelectItem}
-        />
-      ) : null}
-    </aside>
+    <section>
+      <EvidenceSection title="Representatives" items={slice.representatives} onSelect={onSelect} />
+      <EvidenceSection title="Bridges" items={slice.bridges} onSelect={onSelect} />
+      <VirtualLongTailList virtualizer={rowVirtualizer} items={slice.longTailPage.items} onSelect={onSelect} />
+    </section>
   );
 }
 ```
 
-- [ ] **Step 4: Run the frontend tests and build again**
+- [ ] **Step 2: Serve the built frontend from FastAPI when `dist/` exists**
+
+```python
+# src/memoria/api/atlas.py
+@router.get("/atlas", response_class=HTMLResponse)
+def get_atlas_page() -> str:
+    index_path = frontend_dist_dir / "index.html"
+    if not index_path.exists():
+        return _fallback_page_html()
+    return index_path.read_text(encoding="utf-8")
+
+
+@router.get("/atlas/assets/{asset_path:path}")
+def get_atlas_asset(asset_path: str) -> FileResponse:
+    asset_file = frontend_dist_dir / "assets" / asset_path
+    if not asset_file.is_file():
+        raise HTTPException(status_code=404, detail="atlas asset not found")
+    return FileResponse(asset_file)
+```
+
+- [ ] **Step 3: Build the frontend bundle**
 
 Run:
 
 ```bash
-npm --prefix frontend/atlas run test
-npm --prefix frontend/atlas run build
+cd frontend/atlas
+npm run build
 ```
 
 Expected:
 
 ```text
-PASSED
+dist/index.html emitted
+dist/assets/* emitted
 ```
 
-- [ ] **Step 5: Commit the deeper atlas UX**
+- [ ] **Step 4: Re-run atlas API tests now that the built page path exists**
 
 Run:
 
 ```bash
-git add frontend/atlas/src/lib/evidenceSections.ts frontend/atlas/src/lib/evidenceSections.test.ts frontend/atlas/src/components/RegionNavigator.tsx frontend/atlas/src/components/EvidenceList.tsx frontend/atlas/src/App.tsx frontend/atlas/src/canvas/AtlasCanvas.tsx frontend/atlas/src/components/InsightDock.tsx frontend/atlas/src/state/atlasReducer.ts frontend/atlas/src/state/atlasReducer.test.ts
-git commit -m "feat: add atlas region and evidence drilldown"
+uv run pytest tests/integration/test_atlas_api.py -v
+```
+
+Expected:
+
+```text
+4 passed
+```
+
+- [ ] **Step 5: Commit the atlas UI**
+
+```bash
+git add frontend/atlas/src/canvas/AtlasCanvas.tsx frontend/atlas/src/components/AtlasToolbar.tsx frontend/atlas/src/components/InsightDock.tsx frontend/atlas/src/components/RegionNavigator.tsx frontend/atlas/src/components/EvidenceList.tsx frontend/atlas/src/App.tsx frontend/atlas/src/styles.css src/memoria/api/atlas.py
+git commit -m "feat: add atlas workbench ui"
 ```
 
 ---
 
-### Task 9: Document The Workflow And Run Full Verification
+### Task 7: Document The Workflow And Run Full Verification
 
 **Files:**
 - Modify: `README.md`
 
-- [ ] **Step 1: Add atlas build and rebuild instructions to the README**
+- [ ] **Step 1: Document atlas rebuild and frontend build commands**
 
-````md
+```md
 ## Semantic Atlas
 
-Rebuild atlas projection:
-
-```bash
-uv run memoria-admin --database-url sqlite:///data/memoria.db rebuild-screenshot-atlas
+- Build atlas projection: `uv run python -m memoria.admin.cli --database-url sqlite:////absolute/path/to/semantic-atlas.db rebuild-screenshot-atlas`
+- Start frontend locally: `cd frontend/atlas && npm install && npm run dev`
+- Build frontend for FastAPI serving: `cd frontend/atlas && npm run build`
+- Atlas read APIs: `/atlas/overview`, `/atlas/regions/{region_key}`, `/atlas/evidence`
 ```
 
-Build atlas frontend:
-
-```bash
-npm --prefix frontend/atlas install
-npm --prefix frontend/atlas run build
-```
-
-Run API app with atlas frontend dist:
-
-```python
-from pathlib import Path
-
-from memoria.api.app import create_app
-
-app = create_app(
-    database_url="sqlite:///data/memoria.db",
-    blob_dir=Path("var/blobs"),
-    atlas_frontend_dist=Path("frontend/atlas/dist"),
-)
-```
-````
-
-- [ ] **Step 2: Verify the migration on a clean database**
-
-Run:
-
-```bash
-rm -f var/semantic-atlas.db
-uv run alembic upgrade head
-```
-
-Expected:
-
-```text
-INFO  [alembic.runtime.migration] Running upgrade
-```
-
-- [ ] **Step 3: Run the full backend and frontend verification suite**
+- [ ] **Step 2: Run the Python regression suite**
 
 Run:
 
 ```bash
 uv run pytest -v
-npm --prefix frontend/atlas run test
-npm --prefix frontend/atlas run build
 ```
 
 Expected:
 
 ```text
-backend tests passed
-frontend tests passed
-vite build completed
+pytest session finishes with 0 failures
 ```
 
-- [ ] **Step 4: Smoke-check atlas routes in the app object**
+- [ ] **Step 3: Run the frontend regression commands**
 
 Run:
 
 ```bash
-uv run python -c "from pathlib import Path; from memoria.api.app import create_app; app = create_app(database_url='sqlite:///var/semantic-atlas.db', blob_dir=Path('var/blobs'), atlas_frontend_dist=Path('frontend/atlas/dist')); print(sorted(route.path for route in app.routes if route.path.startswith('/atlas')))"
+cd frontend/atlas
+npm run test
+npm run build
 ```
 
 Expected:
 
 ```text
-['/atlas', '/atlas/overview', '/atlas/regions/{region_key}', '/atlas/regions/{region_key}/evidence']
+Vitest exits with code 0
+Vite build exits with code 0
 ```
 
-- [ ] **Step 5: Commit the docs and final verification state**
-
-Run:
+- [ ] **Step 4: Commit docs and verification-ready changes**
 
 ```bash
 git add README.md
-git commit -m "docs: add semantic atlas development workflow"
+git commit -m "docs: add semantic atlas workflow"
 ```
 
 ---
 
+## Implementation Notes
+
+- Reuse `ScreenshotReadFilters` everywhere atlas accepts filters so that overview, region detail, and evidence slice agree with the existing screenshot/search surfaces.
+- Persist `item_count`, `top_labels`, `top_apps`, `top_people`, `top_entities`, and region geometry in atlas tables. Compute `match_count` only per request and keep it nested under `overlay` in API responses.
+- Keep all coordinates in the same atlas world space. Never recenter coordinates per region in the API.
+- Use `semantic_map_runs` and `semantic_map_points` as the top-level structural input for MVP. Subregions and bridge metadata are new atlas projection work.
+- Treat `hashed-text-v1` as an MVP dependency, not a forever choice. Keep its metadata explicit in `atlas_runs`.
+- Do not make the browser the source of truth for subregions, representatives, bridges, or shapes.
+- Do not require a frontend build for Python tests to pass; `/atlas` must return a readable fallback page when `frontend/atlas/dist` is missing.
+
 ## Self-Review
 
-### Spec Coverage
+- Spec coverage:
+  - dedicated atlas read model and `atlas_*` tables: Tasks 1 and 3
+  - rebuild policy and active-run guard: Task 3
+  - embedding basis and atlas run reproducibility metadata: Tasks 1 and 3
+  - coordinate contract, request overlays, and split evidence payload: Task 4
+  - React + PixiJS + dock + evidence workbench: Tasks 5 and 6
+  - README/operator workflow: Task 7
+- Placeholder scan:
+  - no standalone ellipsis placeholders remain in Python or shell snippets
+  - no obsolete alternate dotenv filename assumption remains
+- Type consistency:
+  - `atlas_run_id` is carried through run, region, item, and edge records
+  - `overlay.match_count` is request-scoped, while persisted `item_count` stays on the region model
+  - `representatives`, `bridges`, and `long_tail_page` are separate sections in the evidence slice throughout the plan
 
-- Atlas read model location: covered by Task 2 schema work and Task 3 `src/memoria/atlas/`.
-- MVP rebuild policy and lifecycle: covered by Task 3 projection lifecycle and Task 4 admin rebuild command.
-- Embedding basis `hashed-text-v1` and semantic map reuse: covered by Task 3 projection config and rebuild logic.
-- Coordinate contract: covered by Task 3 atlas item and region persistence plus Pixi world-space rendering in Tasks 7 and 8.
-- `AtlasRun` lifecycle and publish semantics: covered by Task 2 table design and Task 3 rebuild lifecycle.
-- Persisted vs request-scoped counts: covered by Task 5 response models with overlays separate from persisted region rows.
-- `AtlasEvidenceSlice` split into `representatives`, `bridges`, and `long_tail_page`: covered by Task 5 API models and Task 8 frontend grouping.
-- Level 0 search/filter and persistent dock: covered by Tasks 5 and 7.
-- Level 1/2 drill-down and EvidenceList: covered by Task 8.
-- React + TypeScript + PixiJS + TanStack Virtual stack: covered by Tasks 6, 7, and 8.
+## Execution Handoff
 
-### Placeholder Scan
+Plan complete and saved to `docs/superpowers/plans/2026-04-11-semantic-atlas-cluster-visualization-implementation.md`. Two execution options:
 
-- No `TBD`, `TODO`, or “similar to previous task” placeholders remain.
-- Every task names concrete files, commands, and expected results.
-- Every code-changing task includes explicit snippets.
+**1. Subagent-Driven (recommended)** - I dispatch a fresh subagent per task, review between tasks, fast iteration
 
-### Type Consistency
+**2. Inline Execution** - Execute tasks in this session using executing-plans, batch execution with checkpoints
 
-- Backend naming consistently uses `atlas_run_id`, `region_key`, `subregion_key`, `representatives`, `bridges`, and `long_tail_page`.
-- Frontend naming matches the API contract and keeps selection separate from drill-down.
-- Atlas rebuild command is consistently named `rebuild-screenshot-atlas`.
+Which approach?

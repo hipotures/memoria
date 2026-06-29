@@ -1,0 +1,1432 @@
+from __future__ import annotations
+
+import hashlib
+import json
+import math
+import re
+from collections import Counter
+from collections import defaultdict
+from dataclasses import dataclass
+from datetime import UTC
+from datetime import datetime
+from itertools import combinations
+from math import dist
+from typing import Sequence
+
+from sqlalchemy import func
+from sqlalchemy import select
+from sqlalchemy.orm import Session
+
+from memoria.atlas.contracts import AtlasCandidateItem
+from memoria.atlas.contracts import BridgeClassification
+from memoria.atlas.contracts import PriorRegionIdentity
+from memoria.domain.models import AssetInterpretation
+from memoria.domain.models import AtlasEdge
+from memoria.domain.models import AtlasItem
+from memoria.domain.models import AtlasRegion
+from memoria.domain.models import AtlasRun
+from memoria.domain.models import KnowledgeClaim
+from memoria.domain.models import KnowledgeEvidenceLink
+from memoria.domain.models import KnowledgeObject
+from memoria.domain.models import PipelineRun
+from memoria.domain.models import SemanticCluster
+from memoria.domain.models import SemanticMapPoint
+from memoria.domain.models import SemanticMapRun
+from memoria.domain.models import SourceItem
+
+ATLAS_KEY = "screenshots_atlas_v1"
+ATLAS_EMBEDDING_TYPE = "screenshot_semantic_text"
+ATLAS_CLUSTERING_METHOD = "semantic-map-plus-subregions-v1"
+ATLAS_LAYOUT_VERSION = "atlas-world-v1"
+ATLAS_RANDOM_SEED = 42
+REGION_SHAPE_PADDING = 42.0
+BRIDGE_MARGIN_THRESHOLD = 0.12
+BRIDGE_SECONDARY_DISTANCE_THRESHOLD = 1.0
+REGION_IDENTITY_OVERLAP_THRESHOLD = 0.6
+REGION_IDENTITY_CENTROID_THRESHOLD = 0.2
+SEMANTIC_EDGE_EXTRA_BUDGET_DIVISOR = 3
+_GENERIC_REGION_LABELS = {
+    "calendar",
+    "chrome",
+    "instagram",
+    "settings",
+    "terminal",
+    "tiktok",
+    "twitter",
+    "x",
+    "youtube",
+}
+_TOKEN_RE = re.compile(r"[a-z0-9]+")
+
+
+@dataclass(slots=True)
+class _AtlasPoint:
+    source_item_id: int
+    cluster_key: str
+    x: float
+    y: float
+    vector: list[float]
+    semantic_summary: str | None
+    app_hint: str | None
+    connector_instance_id: str
+    screen_category: str
+    has_knowledge: bool
+    observed_at: datetime | None
+    object_refs: list[str]
+    knowledge_count: int
+    searchable_labels: list[str]
+    cluster_hints: list[str]
+
+
+@dataclass(slots=True)
+class _SemanticRegionSource:
+    cluster_key: str
+    title: str
+    x: float
+    y: float
+    top_labels: list[str]
+    top_apps: list[str]
+    time_start: datetime | None
+    time_end: datetime | None
+    items: list[_AtlasPoint]
+
+
+@dataclass(slots=True)
+class _LatestSemanticMapRun:
+    map_run_id: int
+    source_snapshot_id: str
+    corpus_hash: str
+    embedding_type: str
+    embedding_model: str
+    embedding_version: str
+    regions: list[_SemanticRegionSource]
+    points_by_id: dict[int, _AtlasPoint]
+
+    @property
+    def source_item_ids(self) -> list[int]:
+        return sorted(self.points_by_id)
+
+
+@dataclass(slots=True)
+class _AtlasRegionDraft:
+    region_key: str
+    parent_region_key: str | None
+    level: int
+    title: str
+    x: float
+    y: float
+    label_x: float
+    label_y: float
+    region_shape: dict[str, object]
+    item_count: int
+    top_labels: list[str]
+    top_apps: list[str]
+    top_people: list[str]
+    top_entities: list[str]
+    time_start: datetime | None
+    time_end: datetime | None
+    representatives: list[dict[str, object]]
+    bridge_neighbors: list[dict[str, object]]
+    cohesion_score: float
+    centroid_vector: list[float]
+    items: list[_AtlasPoint]
+    representative_rank_by_source_item_id: dict[int, int]
+    subregion_key_by_source_item_id: dict[int, str]
+    subregions: list[_AtlasRegionDraft]
+
+
+@dataclass(slots=True)
+class _AtlasItemDraft:
+    source_item_id: int
+    region_key: str
+    subregion_key: str | None
+    x: float
+    y: float
+    semantic_summary: str | None
+    app_hint: str | None
+    connector_instance_id: str
+    screen_category: str
+    has_knowledge: bool
+    observed_at: datetime | None
+    object_refs: list[str]
+    is_representative: bool
+    representative_rank: int | None
+    is_bridge: bool
+    bridge_type: str | None
+    secondary_region_key: str | None
+    bridge_score: float
+    screenshot_detail_url: str
+
+
+@dataclass(slots=True)
+class _AtlasEdgeDraft:
+    source_region_key: str
+    target_region_key: str
+    weight: float
+    edge_type: str
+
+
+def derive_subregion_count(item_count: int) -> int:
+    if item_count < 8:
+        return 0
+    if item_count < 20:
+        return 3
+    if item_count < 40:
+        return 4
+    if item_count < 80:
+        return 6
+    return 8
+
+
+def select_representatives(
+    items: list[AtlasCandidateItem],
+    *,
+    limit: int,
+) -> list[AtlasCandidateItem]:
+    if limit <= 0 or not items:
+        return []
+
+    medoid_distances = _compute_medoid_distances(items)
+
+    deduplicated_items = list(_select_best_duplicate_candidates(items, medoid_distances).values())
+    deduplicated_medoid_distances = _compute_medoid_distances(deduplicated_items)
+
+    ordered = sorted(
+        deduplicated_items,
+        key=lambda item: (
+            deduplicated_medoid_distances[item.source_item_id],
+            -item.metadata_score,
+            item.source_item_id,
+        ),
+    )
+
+    selected: list[AtlasCandidateItem] = []
+    for candidate in ordered:
+        selected.append(candidate)
+        if len(selected) == limit:
+            break
+    return selected
+
+
+def classify_bridge(
+    *,
+    primary_region_key: str,
+    secondary_region_key: str,
+    primary_distance: float,
+    secondary_distance: float,
+    same_parent: bool,
+) -> BridgeClassification | None:
+    margin = secondary_distance - primary_distance
+    if margin < 0.0 or margin > BRIDGE_MARGIN_THRESHOLD:
+        return None
+
+    if secondary_distance > BRIDGE_SECONDARY_DISTANCE_THRESHOLD:
+        return None
+
+    return BridgeClassification(
+        primary_region_key=primary_region_key,
+        secondary_region_key=secondary_region_key,
+        bridge_type="internal_bridge" if same_parent else "external_bridge",
+        bridge_score=max(0.0, 1.0 - (margin / BRIDGE_MARGIN_THRESHOLD)),
+    )
+
+
+def match_region_identity(
+    *,
+    prior_regions: list[PriorRegionIdentity],
+    source_item_ids: set[int],
+    centroid: list[float],
+    label_tokens: set[str],
+) -> str | None:
+    if not prior_regions or not source_item_ids:
+        return None
+
+    ranked_matches: list[tuple[tuple[float, float, int, str], str]] = []
+    for prior_region in prior_regions:
+        shared_count = len(prior_region.source_item_ids & source_item_ids)
+        if shared_count == 0:
+            continue
+
+        overlap = shared_count / max(len(prior_region.source_item_ids), len(source_item_ids))
+        if overlap < REGION_IDENTITY_OVERLAP_THRESHOLD:
+            continue
+
+        centroid_distance = _vector_distance(prior_region.centroid, centroid)
+        if centroid_distance > REGION_IDENTITY_CENTROID_THRESHOLD:
+            continue
+
+        label_overlap = len(prior_region.label_tokens & label_tokens)
+        ranked_matches.append(
+            (
+                (
+                    -overlap,
+                    centroid_distance,
+                    -label_overlap,
+                    prior_region.region_key,
+                ),
+                prior_region.region_key,
+            )
+        )
+
+    if not ranked_matches:
+        return None
+
+    return min(ranked_matches)[1]
+
+
+def rebuild_screenshot_atlas(session: Session, *, force: bool = False) -> dict[str, object]:
+    active_runs = _count_running_screenshot_pipeline_runs(session)
+    if active_runs > 0 and not force:
+        raise RuntimeError(f"active screenshot pipeline runs: {active_runs}")
+
+    latest_map_run = _load_latest_semantic_map_run(session)
+    if latest_map_run is None:
+        raise RuntimeError("semantic map run is required before atlas rebuild")
+
+    prior_region_identities = _load_prior_region_identities(
+        session,
+        points_by_id=latest_map_run.points_by_id,
+    )
+    top_regions = _build_top_regions(
+        latest_map_run=latest_map_run,
+        prior_region_identities=prior_region_identities,
+    )
+    item_drafts, bridge_pairs = _build_item_drafts(top_regions)
+    edge_drafts, neighbors_by_region_key = _build_edge_drafts(top_regions, bridge_pairs)
+    for region in top_regions:
+        region.bridge_neighbors = neighbors_by_region_key.get(region.region_key, [])
+
+    timestamp = _utcnow()
+    atlas_run = AtlasRun(
+        atlas_key=ATLAS_KEY,
+        source_family="screenshot",
+        status="completed",
+        source_count=len(latest_map_run.source_item_ids),
+        source_snapshot_id=latest_map_run.source_snapshot_id,
+        corpus_hash=latest_map_run.corpus_hash,
+        embedding_type=latest_map_run.embedding_type,
+        embedding_model=latest_map_run.embedding_model,
+        embedding_version=latest_map_run.embedding_version,
+        clustering_method=ATLAS_CLUSTERING_METHOD,
+        clustering_params_json=json.dumps(
+            {
+                "bridge_margin": BRIDGE_MARGIN_THRESHOLD,
+                "subregion_cap": 8,
+                "topology": "semantic-map-derived",
+            },
+            sort_keys=True,
+        ),
+        random_seed=ATLAS_RANDOM_SEED,
+        layout_version=ATLAS_LAYOUT_VERSION,
+        completed_at=timestamp,
+        published_at=timestamp,
+    )
+    session.add(atlas_run)
+    session.flush()
+
+    _persist_regions(session, atlas_run_id=atlas_run.id, top_regions=top_regions)
+    _persist_items(session, atlas_run_id=atlas_run.id, item_drafts=item_drafts)
+    _persist_edges(session, atlas_run_id=atlas_run.id, edge_drafts=edge_drafts)
+
+    region_count = len(top_regions) + sum(len(region.subregions) for region in top_regions)
+    return {
+        "atlas_run_id": atlas_run.id,
+        "region_count": region_count,
+        "item_count": len(item_drafts),
+        "top_region_keys": sorted(region.region_key for region in top_regions),
+    }
+
+
+def _load_latest_semantic_map_run(session: Session) -> _LatestSemanticMapRun | None:
+    map_run = session.scalar(
+        select(SemanticMapRun)
+        .where(SemanticMapRun.map_key == "screenshots_semantic_v1")
+        .order_by(SemanticMapRun.id.desc())
+    )
+    if map_run is None:
+        return None
+
+    clusters = session.scalars(
+        select(SemanticCluster)
+        .where(SemanticCluster.map_run_id == map_run.id)
+        .order_by(SemanticCluster.id.asc())
+    ).all()
+    embedding_type, embedding_model, embedding_version = _load_semantic_map_snapshot_metadata(map_run)
+
+    map_points = session.scalars(
+        select(SemanticMapPoint)
+        .where(SemanticMapPoint.map_run_id == map_run.id)
+        .order_by(SemanticMapPoint.id.asc())
+    ).all()
+    source_item_ids = [point.source_item_id for point in map_points]
+    object_refs_by_source_item_id = _load_object_refs_by_source_item_id(
+        session,
+        source_item_ids=source_item_ids,
+    )
+    knowledge_counts_by_source_item_id = _load_knowledge_counts_by_source_item_id(
+        session,
+        source_item_ids=source_item_ids,
+    )
+    signal_scale = _signal_scale(clusters=clusters, points=map_points)
+
+    points_by_id: dict[int, _AtlasPoint] = {}
+    grouped_points: dict[str, list[_AtlasPoint]] = defaultdict(list)
+    for point in map_points:
+        interpretation = session.get(AssetInterpretation, point.source_item_id)
+        source_item = session.get(SourceItem, point.source_item_id)
+        if interpretation is None or source_item is None or point.cluster_key is None:
+            continue
+
+        atlas_point = _AtlasPoint(
+            source_item_id=point.source_item_id,
+            cluster_key=point.cluster_key,
+            x=point.x,
+            y=point.y,
+            vector=_signal_vector(x=point.x, y=point.y, scale=signal_scale),
+            semantic_summary=interpretation.semantic_summary,
+            app_hint=interpretation.app_hint,
+            connector_instance_id=source_item.connector_instance_id,
+            screen_category=interpretation.screen_category,
+            has_knowledge=knowledge_counts_by_source_item_id.get(point.source_item_id, 0) > 0,
+            observed_at=source_item.source_observed_at or source_item.source_created_at,
+            object_refs=object_refs_by_source_item_id.get(point.source_item_id, []),
+            knowledge_count=knowledge_counts_by_source_item_id.get(point.source_item_id, 0),
+            searchable_labels=json.loads(interpretation.searchable_labels_json or "[]"),
+            cluster_hints=json.loads(interpretation.cluster_hints_json or "[]"),
+        )
+        points_by_id[point.source_item_id] = atlas_point
+        grouped_points[atlas_point.cluster_key].append(atlas_point)
+
+    regions: list[_SemanticRegionSource] = []
+    for cluster in clusters:
+        summary = json.loads(cluster.summary_json or "{}")
+        regions.append(
+            _SemanticRegionSource(
+                cluster_key=cluster.cluster_key,
+                title=str(summary.get("title") or cluster.title or cluster.cluster_key),
+                x=cluster.centroid_x,
+                y=cluster.centroid_y,
+                top_labels=list(summary.get("top_labels") or []),
+                top_apps=list(summary.get("dominant_apps") or []),
+                time_start=_parse_datetime(summary.get("time_start")),
+                time_end=_parse_datetime(summary.get("time_end")),
+                items=grouped_points.get(cluster.cluster_key, []),
+            )
+        )
+
+    persisted_regions = [region for region in regions if region.items]
+    source_snapshot_id, corpus_hash = _atlas_input_snapshot_identity(
+        map_run_id=map_run.id,
+        embedding_type=embedding_type,
+        embedding_model=embedding_model,
+        embedding_version=embedding_version,
+        regions=persisted_regions,
+        points_by_id=points_by_id,
+    )
+
+    return _LatestSemanticMapRun(
+        map_run_id=map_run.id,
+        source_snapshot_id=source_snapshot_id,
+        corpus_hash=corpus_hash,
+        embedding_type=embedding_type,
+        embedding_model=embedding_model,
+        embedding_version=embedding_version,
+        regions=persisted_regions,
+        points_by_id=points_by_id,
+    )
+
+
+def _load_prior_region_identities(
+    session: Session,
+    *,
+    points_by_id: dict[int, _AtlasPoint],
+) -> list[PriorRegionIdentity]:
+    prior_run = session.scalar(
+        select(AtlasRun)
+        .where(AtlasRun.atlas_key == ATLAS_KEY, AtlasRun.status == "completed")
+        .order_by(AtlasRun.id.desc())
+    )
+    if prior_run is None:
+        return []
+
+    prior_regions = session.scalars(
+        select(AtlasRegion)
+        .where(AtlasRegion.atlas_run_id == prior_run.id, AtlasRegion.level == 0)
+        .order_by(AtlasRegion.region_key.asc())
+    ).all()
+    prior_items = session.scalars(
+        select(AtlasItem).where(AtlasItem.atlas_run_id == prior_run.id).order_by(AtlasItem.id.asc())
+    ).all()
+    source_ids_by_region_key: dict[str, set[int]] = defaultdict(set)
+    for item in prior_items:
+        source_ids_by_region_key[item.region_key].add(item.source_item_id)
+
+    identities: list[PriorRegionIdentity] = []
+    for region in prior_regions:
+        source_item_ids = source_ids_by_region_key.get(region.region_key, set())
+        centroid = _mean_vector(
+            [points_by_id[source_item_id].vector for source_item_id in sorted(source_item_ids) if source_item_id in points_by_id]
+        )
+        if not centroid:
+            continue
+        identities.append(
+            PriorRegionIdentity(
+                region_key=region.region_key,
+                source_item_ids=source_item_ids,
+                centroid=centroid,
+                label_tokens=_tokenize_strings(
+                    [region.title, *json.loads(region.top_labels_json or "[]")]
+                ),
+            )
+        )
+    return identities
+
+
+def _build_top_regions(
+    *,
+    latest_map_run: _LatestSemanticMapRun,
+    prior_region_identities: list[PriorRegionIdentity],
+) -> list[_AtlasRegionDraft]:
+    atlas_center = _compute_atlas_center(latest_map_run.regions)
+    top_regions: list[_AtlasRegionDraft] = []
+    for region_source in latest_map_run.regions:
+        current_source_item_ids = {item.source_item_id for item in region_source.items}
+        centroid_vector = _mean_vector([item.vector for item in region_source.items])
+        top_summary = _summarize_points(region_source.items, fallback_title=region_source.title)
+        region_key = match_region_identity(
+            prior_regions=prior_region_identities,
+            source_item_ids=current_source_item_ids,
+            centroid=centroid_vector,
+            label_tokens=_tokenize_strings([top_summary["title"], *top_summary["top_labels"]]),
+        )
+        if region_key is None:
+            region_key = f"region-{region_source.cluster_key}"
+
+        representative_rank_by_source_item_id = _representative_rank_by_source_item_id(region_source.items)
+        subregions, subregion_key_by_source_item_id = _build_subregions(
+            parent_region_key=region_key,
+            items=region_source.items,
+            atlas_center=atlas_center,
+        )
+        region_shape = _build_region_shape(region_source.items)
+        label_x, label_y = _compute_label_anchor(
+            region_x=region_source.x,
+            region_y=region_source.y,
+            region_shape=region_shape,
+            atlas_center=atlas_center,
+        )
+
+        top_regions.append(
+            _AtlasRegionDraft(
+                region_key=region_key,
+                parent_region_key=None,
+                level=0,
+                title=top_summary["title"],
+                x=region_source.x,
+                y=region_source.y,
+                label_x=label_x,
+                label_y=label_y,
+                region_shape=region_shape,
+                item_count=len(region_source.items),
+                top_labels=top_summary["top_labels"],
+                top_apps=top_summary["top_apps"],
+                top_people=top_summary["top_people"],
+                top_entities=top_summary["top_entities"],
+                time_start=top_summary["time_start"],
+                time_end=top_summary["time_end"],
+                representatives=_representatives_payload(representative_rank_by_source_item_id),
+                bridge_neighbors=[],
+                cohesion_score=_cohesion_score(region_source.items, centroid_vector),
+                centroid_vector=centroid_vector,
+                items=region_source.items,
+                representative_rank_by_source_item_id=representative_rank_by_source_item_id,
+                subregion_key_by_source_item_id=subregion_key_by_source_item_id,
+                subregions=subregions,
+            )
+        )
+    return top_regions
+
+
+def _build_subregions(
+    *,
+    parent_region_key: str,
+    items: list[_AtlasPoint],
+    atlas_center: tuple[float, float],
+) -> tuple[list[_AtlasRegionDraft], dict[int, str]]:
+    subregion_count = min(derive_subregion_count(len(items)), len(items))
+    if subregion_count <= 0:
+        return [], {}
+
+    center_x = sum(item.x for item in items) / len(items)
+    center_y = sum(item.y for item in items) / len(items)
+    ordered_items = sorted(
+        items,
+        key=lambda item: (
+            math.atan2(item.y - center_y, item.x - center_x),
+            item.source_item_id,
+        ),
+    )
+
+    subregions: list[_AtlasRegionDraft] = []
+    subregion_key_by_source_item_id: dict[int, str] = {}
+    chunk_size = math.ceil(len(ordered_items) / subregion_count)
+    for index in range(subregion_count):
+        chunk = ordered_items[index * chunk_size : (index + 1) * chunk_size]
+        if not chunk:
+            continue
+
+        chunk_summary = _summarize_points(
+            chunk,
+            fallback_title=f"{parent_region_key} / {index + 1}",
+        )
+        centroid_vector = _mean_vector([item.vector for item in chunk])
+        chunk_x = round(sum(item.x for item in chunk) / len(chunk), 3)
+        chunk_y = round(sum(item.y for item in chunk) / len(chunk), 3)
+        subregion_key = f"{parent_region_key}/subregion-{index + 1:02d}"
+        region_shape = _build_region_shape(chunk, padding=24.0)
+        label_x, label_y = _compute_label_anchor(
+            region_x=chunk_x,
+            region_y=chunk_y,
+            region_shape=region_shape,
+            atlas_center=atlas_center,
+        )
+        representative_rank_by_source_item_id = _representative_rank_by_source_item_id(chunk, limit=3)
+        for item in chunk:
+            subregion_key_by_source_item_id[item.source_item_id] = subregion_key
+
+        subregions.append(
+            _AtlasRegionDraft(
+                region_key=subregion_key,
+                parent_region_key=parent_region_key,
+                level=1,
+                title=chunk_summary["title"],
+                x=chunk_x,
+                y=chunk_y,
+                label_x=label_x,
+                label_y=label_y,
+                region_shape=region_shape,
+                item_count=len(chunk),
+                top_labels=chunk_summary["top_labels"],
+                top_apps=chunk_summary["top_apps"],
+                top_people=chunk_summary["top_people"],
+                top_entities=chunk_summary["top_entities"],
+                time_start=chunk_summary["time_start"],
+                time_end=chunk_summary["time_end"],
+                representatives=_representatives_payload(representative_rank_by_source_item_id),
+                bridge_neighbors=[],
+                cohesion_score=_cohesion_score(chunk, centroid_vector),
+                centroid_vector=centroid_vector,
+                items=chunk,
+                representative_rank_by_source_item_id=representative_rank_by_source_item_id,
+                subregion_key_by_source_item_id={},
+                subregions=[],
+            )
+        )
+
+    _assign_subregion_bridge_neighbors(subregions)
+    return subregions, subregion_key_by_source_item_id
+
+
+def _build_item_drafts(
+    top_regions: list[_AtlasRegionDraft],
+) -> tuple[list[_AtlasItemDraft], Counter[tuple[str, str]]]:
+    region_centroids = {region.region_key: region.centroid_vector for region in top_regions}
+    bridge_pairs: Counter[tuple[str, str]] = Counter()
+    item_drafts: list[_AtlasItemDraft] = []
+
+    for region in top_regions:
+        for item in region.items:
+            classification = _classify_point_bridge(
+                point=item,
+                primary_region_key=region.region_key,
+                region_centroids=region_centroids,
+            )
+            if classification is not None:
+                bridge_pairs[_ordered_pair(region.region_key, classification.secondary_region_key)] += 1
+
+            representative_rank = region.representative_rank_by_source_item_id.get(item.source_item_id)
+            item_drafts.append(
+                _AtlasItemDraft(
+                    source_item_id=item.source_item_id,
+                    region_key=region.region_key,
+                    subregion_key=region.subregion_key_by_source_item_id.get(item.source_item_id),
+                    x=item.x,
+                    y=item.y,
+                    semantic_summary=item.semantic_summary,
+                    app_hint=item.app_hint,
+                    connector_instance_id=item.connector_instance_id,
+                    screen_category=item.screen_category,
+                    has_knowledge=item.has_knowledge,
+                    observed_at=item.observed_at,
+                    object_refs=item.object_refs,
+                    is_representative=representative_rank is not None,
+                    representative_rank=representative_rank,
+                    is_bridge=classification is not None,
+                    bridge_type=None if classification is None else classification.bridge_type,
+                    secondary_region_key=None if classification is None else classification.secondary_region_key,
+                    bridge_score=0.0 if classification is None else round(classification.bridge_score, 6),
+                    screenshot_detail_url=f"/screenshots/{item.source_item_id}",
+                )
+            )
+
+    return item_drafts, bridge_pairs
+
+
+def _build_edge_drafts(
+    top_regions: list[_AtlasRegionDraft],
+    bridge_pairs: Counter[tuple[str, str]],
+) -> tuple[list[_AtlasEdgeDraft], dict[str, list[dict[str, object]]]]:
+    edge_drafts: list[_AtlasEdgeDraft] = []
+    neighbors_by_region_key: dict[str, list[dict[str, object]]] = defaultdict(list)
+
+    for semantic_edge in _build_sparse_semantic_edge_drafts(top_regions):
+        edge_drafts.append(semantic_edge)
+        neighbors_by_region_key[semantic_edge.source_region_key].append(
+            {
+                "edge_type": semantic_edge.edge_type,
+                "region_key": semantic_edge.target_region_key,
+                "weight": semantic_edge.weight,
+            }
+        )
+        neighbors_by_region_key[semantic_edge.target_region_key].append(
+            {
+                "edge_type": semantic_edge.edge_type,
+                "region_key": semantic_edge.source_region_key,
+                "weight": semantic_edge.weight,
+            }
+        )
+
+    for left_region, right_region in combinations(sorted(top_regions, key=lambda region: region.region_key), 2):
+        bridge_count = bridge_pairs.get(_ordered_pair(left_region.region_key, right_region.region_key), 0)
+        if bridge_count > 0:
+            bridge_weight = float(bridge_count)
+            edge_drafts.append(
+                _AtlasEdgeDraft(
+                    source_region_key=left_region.region_key,
+                    target_region_key=right_region.region_key,
+                    weight=bridge_weight,
+                    edge_type="semantic_bridge",
+                )
+            )
+            neighbors_by_region_key[left_region.region_key].append(
+                {
+                    "edge_type": "semantic_bridge",
+                    "region_key": right_region.region_key,
+                    "weight": bridge_weight,
+                }
+            )
+            neighbors_by_region_key[right_region.region_key].append(
+                {
+                    "edge_type": "semantic_bridge",
+                    "region_key": left_region.region_key,
+                    "weight": bridge_weight,
+                }
+            )
+
+    for region_key, neighbors in neighbors_by_region_key.items():
+        neighbors_by_region_key[region_key] = sorted(
+            neighbors,
+            key=lambda neighbor: (
+                neighbor["edge_type"],
+                -float(neighbor["weight"]),
+                str(neighbor["region_key"]),
+            ),
+        )
+
+    return edge_drafts, neighbors_by_region_key
+
+
+def _assign_subregion_bridge_neighbors(subregions: list[_AtlasRegionDraft]) -> None:
+    if len(subregions) < 2:
+        return
+
+    neighbors_by_region_key: dict[str, list[dict[str, object]]] = defaultdict(list)
+    for index in range(len(subregions) - 1):
+        left_region = subregions[index]
+        right_region = subregions[index + 1]
+        weight = round(_signal_similarity(left_region.centroid_vector, right_region.centroid_vector), 6)
+
+        neighbors_by_region_key[left_region.region_key].append(
+            {
+                "edge_type": "internal_bridge",
+                "region_key": right_region.region_key,
+                "weight": weight,
+            }
+        )
+        neighbors_by_region_key[right_region.region_key].append(
+            {
+                "edge_type": "internal_bridge",
+                "region_key": left_region.region_key,
+                "weight": weight,
+            }
+        )
+
+    for subregion in subregions:
+        subregion.bridge_neighbors = sorted(
+            neighbors_by_region_key.get(subregion.region_key, []),
+            key=lambda neighbor: (-float(neighbor["weight"]), str(neighbor["region_key"])),
+        )
+
+
+def _build_sparse_semantic_edge_drafts(
+    top_regions: list[_AtlasRegionDraft],
+) -> list[_AtlasEdgeDraft]:
+    ordered_regions = sorted(top_regions, key=lambda region: region.region_key)
+    if len(ordered_regions) < 2:
+        return []
+
+    candidates: list[tuple[float, str, str]] = []
+    for left_region, right_region in combinations(ordered_regions, 2):
+        candidates.append(
+            (
+                round(_signal_similarity(left_region.centroid_vector, right_region.centroid_vector), 6),
+                left_region.region_key,
+                right_region.region_key,
+            )
+        )
+    candidates.sort(key=lambda candidate: (-candidate[0], candidate[1], candidate[2]))
+
+    selected_pairs: set[tuple[str, str]] = set()
+    degree_by_region_key: Counter[str] = Counter()
+    parent_by_region_key = {region.region_key: region.region_key for region in ordered_regions}
+
+    def _find(region_key: str) -> str:
+        parent = parent_by_region_key[region_key]
+        if parent == region_key:
+            return parent
+        parent_by_region_key[region_key] = _find(parent)
+        return parent_by_region_key[region_key]
+
+    def _union(left_key: str, right_key: str) -> bool:
+        left_root = _find(left_key)
+        right_root = _find(right_key)
+        if left_root == right_root:
+            return False
+        parent_by_region_key[right_root] = left_root
+        return True
+
+    selected_edges: list[_AtlasEdgeDraft] = []
+    for weight, left_key, right_key in candidates:
+        if not _union(left_key, right_key):
+            continue
+        selected_pairs.add((left_key, right_key))
+        degree_by_region_key[left_key] += 1
+        degree_by_region_key[right_key] += 1
+        selected_edges.append(
+            _AtlasEdgeDraft(
+                source_region_key=left_key,
+                target_region_key=right_key,
+                weight=weight,
+                edge_type="semantic_similarity",
+            )
+        )
+
+    extra_budget = max(1, math.ceil(len(ordered_regions) / SEMANTIC_EDGE_EXTRA_BUDGET_DIVISOR))
+    for weight, left_key, right_key in candidates:
+        if extra_budget <= 0 or (left_key, right_key) in selected_pairs:
+            continue
+        if degree_by_region_key[left_key] >= 2 and degree_by_region_key[right_key] >= 2:
+            continue
+
+        selected_pairs.add((left_key, right_key))
+        degree_by_region_key[left_key] += 1
+        degree_by_region_key[right_key] += 1
+        selected_edges.append(
+            _AtlasEdgeDraft(
+                source_region_key=left_key,
+                target_region_key=right_key,
+                weight=weight,
+                edge_type="semantic_similarity",
+            )
+        )
+        extra_budget -= 1
+
+    return sorted(
+        selected_edges,
+        key=lambda edge: (edge.source_region_key, edge.target_region_key),
+    )
+
+
+def _persist_regions(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    top_regions: list[_AtlasRegionDraft],
+) -> None:
+    for region in top_regions:
+        _persist_region(session, atlas_run_id=atlas_run_id, region=region)
+        for subregion in region.subregions:
+            _persist_region(session, atlas_run_id=atlas_run_id, region=subregion)
+    session.flush()
+
+
+def _persist_region(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    region: _AtlasRegionDraft,
+) -> None:
+    session.add(
+        AtlasRegion(
+            atlas_run_id=atlas_run_id,
+            region_key=region.region_key,
+            parent_region_key=region.parent_region_key,
+            level=region.level,
+            title=region.title,
+            x=region.x,
+            y=region.y,
+            label_x=region.label_x,
+            label_y=region.label_y,
+            region_shape_json=json.dumps(region.region_shape, sort_keys=True),
+            item_count=region.item_count,
+            top_labels_json=json.dumps(region.top_labels, sort_keys=True),
+            top_apps_json=json.dumps(region.top_apps, sort_keys=True),
+            top_people_json=json.dumps(region.top_people, sort_keys=True),
+            top_entities_json=json.dumps(region.top_entities, sort_keys=True),
+            time_start=region.time_start,
+            time_end=region.time_end,
+            representatives_json=json.dumps(region.representatives, sort_keys=True),
+            bridge_neighbors_json=json.dumps(region.bridge_neighbors, sort_keys=True),
+            cohesion_score=region.cohesion_score,
+        )
+    )
+
+
+def _persist_items(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    item_drafts: list[_AtlasItemDraft],
+) -> None:
+    for item in item_drafts:
+        session.add(
+            AtlasItem(
+                atlas_run_id=atlas_run_id,
+                source_item_id=item.source_item_id,
+                region_key=item.region_key,
+                subregion_key=item.subregion_key,
+                x=item.x,
+                y=item.y,
+                semantic_summary=item.semantic_summary,
+                app_hint=item.app_hint,
+                connector_instance_id=item.connector_instance_id,
+                screen_category=item.screen_category,
+                has_knowledge=item.has_knowledge,
+                observed_at=item.observed_at,
+                object_refs_json=json.dumps(item.object_refs, sort_keys=True),
+                is_representative=item.is_representative,
+                representative_rank=item.representative_rank,
+                is_bridge=item.is_bridge,
+                bridge_type=item.bridge_type,
+                secondary_region_key=item.secondary_region_key,
+                bridge_score=item.bridge_score,
+                screenshot_detail_url=item.screenshot_detail_url,
+            )
+        )
+    session.flush()
+
+
+def _persist_edges(
+    session: Session,
+    *,
+    atlas_run_id: int,
+    edge_drafts: list[_AtlasEdgeDraft],
+) -> None:
+    for edge in edge_drafts:
+        session.add(
+            AtlasEdge(
+                atlas_run_id=atlas_run_id,
+                source_region_key=edge.source_region_key,
+                target_region_key=edge.target_region_key,
+                weight=edge.weight,
+                edge_type=edge.edge_type,
+            )
+        )
+    session.flush()
+
+
+def _count_running_screenshot_pipeline_runs(session: Session) -> int:
+    return int(
+        session.scalar(
+            select(func.count())
+            .select_from(PipelineRun)
+            .join(SourceItem, SourceItem.id == PipelineRun.source_item_id)
+            .where(PipelineRun.status == "running", SourceItem.source_family == "screenshot")
+        )
+        or 0
+    )
+
+
+def _representative_rank_by_source_item_id(
+    items: list[_AtlasPoint],
+    *,
+    limit: int = 6,
+) -> dict[int, int]:
+    candidates = [
+        AtlasCandidateItem(
+            source_item_id=item.source_item_id,
+            vector=item.vector,
+            semantic_summary=item.semantic_summary,
+            app_hint=item.app_hint,
+            object_refs=item.object_refs,
+            knowledge_count=item.knowledge_count,
+        )
+        for item in items
+    ]
+    ranked = select_representatives(candidates, limit=min(limit, len(candidates)))
+    return {
+        candidate.source_item_id: rank
+        for rank, candidate in enumerate(ranked, start=1)
+    }
+
+
+def _classify_point_bridge(
+    *,
+    point: _AtlasPoint,
+    primary_region_key: str,
+    region_centroids: dict[str, list[float]],
+) -> BridgeClassification | None:
+    primary_centroid = region_centroids.get(primary_region_key)
+    if primary_centroid is None:
+        return None
+
+    secondary_candidates = sorted(
+        (
+            (_signal_distance(point.vector, centroid), region_key)
+            for region_key, centroid in region_centroids.items()
+            if region_key != primary_region_key
+        ),
+        key=lambda entry: (entry[0], entry[1]),
+    )
+    if not secondary_candidates:
+        return None
+
+    primary_distance = _signal_distance(point.vector, primary_centroid)
+    secondary_distance, secondary_region_key = secondary_candidates[0]
+    return classify_bridge(
+        primary_region_key=primary_region_key,
+        secondary_region_key=secondary_region_key,
+        primary_distance=min(primary_distance, secondary_distance),
+        secondary_distance=max(primary_distance, secondary_distance),
+        same_parent=False,
+    )
+
+
+def _load_semantic_map_snapshot_metadata(map_run: SemanticMapRun) -> tuple[str, str, str]:
+    config = json.loads(map_run.config_json or "{}")
+    embedding_type = str(config.get("embedding_type") or ATLAS_EMBEDDING_TYPE)
+    embedding_model = str(config.get("embedding_model") or "unknown")
+    raw_dimension = config.get("embedding_dimension")
+    dimension = int(raw_dimension) if raw_dimension is not None else 0
+    raw_version = config.get("embedding_version")
+    if isinstance(raw_version, str) and raw_version:
+        embedding_version = raw_version
+    elif dimension > 0:
+        embedding_version = _embedding_version_from_dimension(dimension)
+    else:
+        embedding_version = "unknown"
+    return embedding_type, embedding_model, embedding_version
+
+
+def _signal_scale(
+    *,
+    clusters: Sequence[SemanticCluster],
+    points: Sequence[SemanticMapPoint],
+) -> float:
+    coordinate_candidates = [
+        abs(cluster.centroid_x)
+        for cluster in clusters
+    ]
+    coordinate_candidates.extend(abs(cluster.centroid_y) for cluster in clusters)
+    coordinate_candidates.extend(abs(point.x) for point in points)
+    coordinate_candidates.extend(abs(point.y) for point in points)
+    return max(coordinate_candidates, default=1.0) or 1.0
+
+
+def _signal_vector(*, x: float, y: float, scale: float) -> list[float]:
+    return [
+        round(x / scale, 6),
+        round(y / scale, 6),
+    ]
+
+
+def _compute_atlas_center(region_sources: list[_SemanticRegionSource]) -> tuple[float, float]:
+    if not region_sources:
+        return (0.0, 0.0)
+    return (
+        sum(region_source.x for region_source in region_sources) / len(region_sources),
+        sum(region_source.y for region_source in region_sources) / len(region_sources),
+    )
+
+
+def _build_region_shape(
+    points: list[_AtlasPoint],
+    *,
+    padding: float = REGION_SHAPE_PADDING,
+) -> dict[str, object]:
+    if not points:
+        return {"rings": [], "shape_type": "polygon"}
+
+    xs = [point.x for point in points]
+    ys = [point.y for point in points]
+    min_x = min(xs) - padding
+    max_x = max(xs) + padding
+    min_y = min(ys) - padding
+    max_y = max(ys) + padding
+    return {
+        "shape_type": "polygon",
+        "rings": [
+            [
+                {"x": round(min_x, 3), "y": round(min_y, 3)},
+                {"x": round(max_x, 3), "y": round(min_y, 3)},
+                {"x": round(max_x, 3), "y": round(max_y, 3)},
+                {"x": round(min_x, 3), "y": round(max_y, 3)},
+                {"x": round(min_x, 3), "y": round(min_y, 3)},
+            ]
+        ],
+    }
+
+
+def _region_bounds(region_shape: dict[str, object]) -> tuple[float, float, float, float]:
+    rings = region_shape.get("rings")
+    if not isinstance(rings, list):
+        return (0.0, 0.0, 0.0, 0.0)
+
+    xs: list[float] = []
+    ys: list[float] = []
+    for ring in rings:
+        if not isinstance(ring, list):
+            continue
+        for point in ring:
+            if isinstance(point, dict):
+                x_value = point.get("x")
+                y_value = point.get("y")
+            elif isinstance(point, (list, tuple)) and len(point) >= 2:
+                x_value = point[0]
+                y_value = point[1]
+            else:
+                continue
+            if isinstance(x_value, int | float) and isinstance(y_value, int | float):
+                xs.append(float(x_value))
+                ys.append(float(y_value))
+
+    if not xs or not ys:
+        return (0.0, 0.0, 0.0, 0.0)
+    return (min(xs), min(ys), max(xs), max(ys))
+
+
+def _compute_label_anchor(
+    *,
+    region_x: float,
+    region_y: float,
+    region_shape: dict[str, object],
+    atlas_center: tuple[float, float],
+) -> tuple[float, float]:
+    min_x, min_y, max_x, max_y = _region_bounds(region_shape)
+    span = max(max_x - min_x, max_y - min_y, 1.0)
+    offset = max(3.0, min(12.0, span * 0.3))
+    horizontal = -offset if region_x >= atlas_center[0] else offset
+    vertical = -offset if region_y >= atlas_center[1] else offset
+    return (region_x + horizontal, region_y + vertical)
+
+
+def _summarize_points(
+    points: list[_AtlasPoint],
+    *,
+    fallback_title: str,
+) -> dict[str, object]:
+    label_counts: Counter[str] = Counter()
+    app_counts: Counter[str] = Counter()
+    people_counts: Counter[str] = Counter()
+    entity_counts: Counter[str] = Counter()
+    observed_values: list[datetime] = []
+
+    for point in points:
+        labels = point.cluster_hints or point.searchable_labels
+        for label in labels:
+            label_counts[label] += 1
+        if point.app_hint:
+            app_counts[point.app_hint] += 1
+        for object_ref in point.object_refs:
+            entity_counts[object_ref] += 1
+            if object_ref.startswith("person:"):
+                people_counts[object_ref] += 1
+        if point.observed_at is not None:
+            observed_values.append(point.observed_at)
+
+    top_labels = _sorted_counter_values(label_counts, limit=4)
+    top_apps = _sorted_counter_values(app_counts, limit=3)
+    top_people = _sorted_counter_values(people_counts, limit=3)
+    top_entities = _sorted_counter_values(entity_counts, limit=5)
+    title = _build_region_title(
+        top_labels=top_labels,
+        top_apps=top_apps,
+        fallback_title=fallback_title,
+    )
+
+    return {
+        "title": title,
+        "top_apps": top_apps,
+        "top_entities": top_entities,
+        "top_labels": top_labels,
+        "top_people": top_people,
+        "time_end": max(observed_values) if observed_values else None,
+        "time_start": min(observed_values) if observed_values else None,
+    }
+
+
+def _sorted_counter_values(counter: Counter[str], *, limit: int) -> list[str]:
+    return [
+        value
+        for value, _count in sorted(counter.items(), key=lambda item: (-item[1], item[0]))[:limit]
+    ]
+
+
+def _normalize_title_token(value: str) -> str | None:
+    normalized = value.strip().lower().replace("_", " ").replace("-", " ")
+    normalized = " ".join(normalized.split())
+    return normalized or None
+
+
+def _is_generic_region_label(value: str) -> bool:
+    normalized = _normalize_title_token(value)
+    return normalized in _GENERIC_REGION_LABELS if normalized else False
+
+
+def _build_region_title(
+    *,
+    top_labels: list[str],
+    top_apps: list[str],
+    fallback_title: str,
+) -> str:
+    semantic_labels = [label for label in top_labels if not _is_generic_region_label(label)]
+    top_app = top_apps[0] if top_apps else None
+
+    if top_app and semantic_labels:
+        return f"{top_app} · {semantic_labels[0]}"
+    if len(semantic_labels) >= 2:
+        return f"{semantic_labels[0]}, {semantic_labels[1]}"
+    if semantic_labels:
+        return semantic_labels[0]
+    if top_app:
+        return top_app
+    return fallback_title
+
+
+def _load_object_refs_by_source_item_id(
+    session: Session,
+    *,
+    source_item_ids: list[int],
+) -> dict[int, list[str]]:
+    if not source_item_ids:
+        return {}
+
+    links = session.execute(
+        select(
+            KnowledgeEvidenceLink.source_item_id,
+            KnowledgeClaim.subject_ref,
+            KnowledgeClaim.object_ref_or_value,
+        )
+        .join(KnowledgeClaim, KnowledgeClaim.id == KnowledgeEvidenceLink.claim_id)
+        .where(KnowledgeEvidenceLink.source_item_id.in_(source_item_ids))
+    ).all()
+
+    refs_by_source_item_id: dict[int, set[str]] = defaultdict(set)
+    all_refs: set[str] = set()
+    for source_item_id, subject_ref, object_ref_or_value in links:
+        refs_by_source_item_id[int(source_item_id)].add(str(subject_ref))
+        all_refs.add(str(subject_ref))
+        if ":" in str(object_ref_or_value):
+            refs_by_source_item_id[int(source_item_id)].add(str(object_ref_or_value))
+            all_refs.add(str(object_ref_or_value))
+
+    existing_refs = set(
+        session.scalars(
+            select(KnowledgeObject.slug).where(KnowledgeObject.slug.in_(sorted(all_refs)))
+        ).all()
+    )
+    return {
+        source_item_id: sorted(
+            ref for ref in refs if ref in existing_refs or ref.startswith("thread:")
+        )
+        for source_item_id, refs in refs_by_source_item_id.items()
+    }
+
+
+def _load_knowledge_counts_by_source_item_id(
+    session: Session,
+    *,
+    source_item_ids: list[int],
+) -> dict[int, int]:
+    if not source_item_ids:
+        return {}
+
+    rows = session.execute(
+        select(
+            KnowledgeEvidenceLink.source_item_id,
+            func.count(func.distinct(KnowledgeEvidenceLink.claim_id)),
+        )
+        .where(KnowledgeEvidenceLink.source_item_id.in_(source_item_ids))
+        .group_by(KnowledgeEvidenceLink.source_item_id)
+    ).all()
+    return {int(source_item_id): int(claim_count) for source_item_id, claim_count in rows}
+
+
+def _representatives_payload(
+    representative_rank_by_source_item_id: dict[int, int],
+) -> list[dict[str, object]]:
+    return [
+        {"rank": rank, "source_item_id": source_item_id}
+        for source_item_id, rank in sorted(
+            representative_rank_by_source_item_id.items(),
+            key=lambda entry: entry[1],
+        )
+    ]
+
+
+def _atlas_input_snapshot_identity(
+    *,
+    map_run_id: int,
+    embedding_type: str,
+    embedding_model: str,
+    embedding_version: str,
+    regions: list[_SemanticRegionSource],
+    points_by_id: dict[int, _AtlasPoint],
+) -> tuple[str, str]:
+    payload = {
+        "embedding_model": embedding_model,
+        "embedding_type": embedding_type,
+        "embedding_version": embedding_version,
+        "map_run_id": map_run_id,
+        "points": [
+            {
+                "app_hint": point.app_hint,
+                "cluster_hints": point.cluster_hints,
+                "cluster_key": point.cluster_key,
+                "connector_instance_id": point.connector_instance_id,
+                "has_knowledge": point.has_knowledge,
+                "knowledge_count": point.knowledge_count,
+                "object_refs": point.object_refs,
+                "observed_at": None if point.observed_at is None else point.observed_at.isoformat(),
+                "screen_category": point.screen_category,
+                "searchable_labels": point.searchable_labels,
+                "semantic_summary": point.semantic_summary,
+                "source_item_id": point.source_item_id,
+                "vector": point.vector,
+                "x": point.x,
+                "y": point.y,
+            }
+            for point in sorted(points_by_id.values(), key=lambda point: point.source_item_id)
+        ],
+        "regions": [
+            {
+                "cluster_key": region.cluster_key,
+                "item_source_item_ids": [item.source_item_id for item in sorted(region.items, key=lambda item: item.source_item_id)],
+                "time_end": None if region.time_end is None else region.time_end.isoformat(),
+                "time_start": None if region.time_start is None else region.time_start.isoformat(),
+                "title": region.title,
+                "top_apps": region.top_apps,
+                "top_labels": region.top_labels,
+                "x": region.x,
+                "y": region.y,
+            }
+            for region in sorted(regions, key=lambda region: region.cluster_key)
+        ],
+    }
+    corpus_hash = hashlib.sha256(
+        json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    return f"atlas-input:semantic-map-run:{map_run_id}:{corpus_hash[:16]}", corpus_hash
+
+
+def _embedding_version_from_dimension(dimension: int) -> str:
+    return f"{dimension}d-basis"
+
+
+def _ordered_pair(left: str, right: str) -> tuple[str, str]:
+    return (left, right) if left <= right else (right, left)
+
+
+def _tokenize_strings(values: list[str]) -> set[str]:
+    tokens: set[str] = set()
+    for value in values:
+        tokens.update(_TOKEN_RE.findall(value.lower()))
+    return tokens
+
+
+def _cohesion_score(points: list[_AtlasPoint], centroid_vector: list[float]) -> float:
+    if not points or not centroid_vector:
+        return 0.0
+    similarities = [_signal_similarity(point.vector, centroid_vector) for point in points]
+    return round(sum(similarities) / len(similarities), 6)
+
+
+def _utcnow() -> datetime:
+    return datetime.now(tz=UTC).replace(tzinfo=None)
+
+
+def _vector_distance(left: Sequence[float], right: Sequence[float]) -> float:
+    return dist(left, right)
+
+
+def _compute_medoid_distances(items: list[AtlasCandidateItem]) -> dict[int, float]:
+    return {
+        item.source_item_id: sum(
+            _vector_distance(item.vector, other.vector)
+            for other in items
+            if other.source_item_id != item.source_item_id
+        )
+        for item in items
+    }
+
+
+def _select_best_duplicate_candidates(
+    items: list[AtlasCandidateItem],
+    medoid_distances: dict[int, float],
+) -> dict[tuple[str, ...], AtlasCandidateItem]:
+    best_by_key: dict[tuple[str, ...], AtlasCandidateItem] = {}
+    for item in items:
+        existing = best_by_key.get(item.near_duplicate_key)
+        if existing is None:
+            best_by_key[item.near_duplicate_key] = item
+            continue
+
+        if _duplicate_preference_key(item, medoid_distances) < _duplicate_preference_key(existing, medoid_distances):
+            best_by_key[item.near_duplicate_key] = item
+    return best_by_key
+
+
+def _duplicate_preference_key(
+    item: AtlasCandidateItem,
+    medoid_distances: dict[int, float],
+) -> tuple[float, float, int]:
+    return (
+        medoid_distances[item.source_item_id],
+        -item.metadata_score,
+        item.source_item_id,
+    )
+
+
+def _mean_vector(vectors: list[list[float]]) -> list[float]:
+    if not vectors:
+        return []
+
+    summed = [0.0] * len(vectors[0])
+    for vector in vectors:
+        for index, value in enumerate(vector):
+            summed[index] += value
+    return [value / len(vectors) for value in summed]
+
+
+def _signal_distance(left: list[float], right: list[float]) -> float:
+    return math.sqrt(sum((left_value - right_value) ** 2 for left_value, right_value in zip(left, right)))
+
+
+def _signal_similarity(left: list[float], right: list[float]) -> float:
+    return 1.0 / (1.0 + _signal_distance(left, right))
+
+
+def _parse_datetime(raw_value: object) -> datetime | None:
+    if not isinstance(raw_value, str) or not raw_value:
+        return None
+    return datetime.fromisoformat(raw_value)

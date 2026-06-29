@@ -1,0 +1,67 @@
+export type ISODateTimeString = string;
+
+export type SimilarityGraphFilters = {
+  connector_instance_id?: string | null;
+  min_cluster_size?: number;
+  min_edge_weight?: number;
+  app_hint?: string | null;
+  screen_category?: string | null;
+  observed_from?: ISODateTimeString | null;
+  observed_to?: ISODateTimeString | null;
+  has_knowledge?: boolean | null;
+  search_query?: string | null;
+};
+
+export type SimilarityGraphRun = {
+  atlas_run_id: number;
+  atlas_key: string;
+  generated_at: ISODateTimeString;
+  source_count: number;
+};
+
+export type SimilarityGraphNode = {
+  region_key: string;
+  title: string;
+  label: string;
+  canonical_title: string;
+  duplicate_title_count: number;
+  x: number;
+  y: number;
+  label_x: number;
+  label_y: number;
+  size: number;
+  item_count: number;
+  degree: number;
+  label_priority: number;
+  dominant_screen_category: string;
+  top_labels: string[];
+  top_apps: string[];
+  top_entities: string[];
+  representative_source_item_ids: number[];
+};
+
+export type SimilarityGraphEdge = {
+  source_region_key: string;
+  target_region_key: string;
+  weight: number;
+  support: number;
+  edge_type: string;
+  reason: string;
+};
+
+export type SimilarityGraphLegendEntry = {
+  category: string;
+  color: string;
+  count: number;
+};
+
+export type SimilarityGraphResponse = {
+  run: SimilarityGraphRun | null;
+  nodes: SimilarityGraphNode[];
+  edges: SimilarityGraphEdge[];
+  legend: SimilarityGraphLegendEntry[];
+  filters: SimilarityGraphFilters;
+  graph_kind: string;
+  edge_scope: string;
+  default_label_limit?: number | null;
+};

@@ -73,6 +73,71 @@ def test_rebuild_screenshot_derived_data_force_bypasses_active_screenshot_runs(t
     assert result == {"absorbed": 0, "projections_refreshed": 0}
 
 
+def test_rebuild_screenshot_atlas_refuses_active_screenshot_runs(tmp_path):
+    from memoria.admin.service import rebuild_screenshot_atlas
+
+    engine = _create_engine(tmp_path, "admin-atlas-rebuild-guard.db")
+    blob_dir = tmp_path / "blobs"
+
+    with Session(engine) as session:
+        ingest_screenshot(
+            session,
+            IngestScreenshotCommand(
+                filename="Screenshot_20240411_101500_Atlas.png",
+                media_type="image/png",
+                content=b"active screenshot atlas run",
+                connector_instance_id="manual-upload",
+                external_id="active-screenshot-atlas-run",
+                blob_dir=blob_dir,
+            ),
+        )
+        session.commit()
+
+    with Session(engine) as session:
+        with pytest.raises(RuntimeError, match="active screenshot pipeline runs: 1"):
+            rebuild_screenshot_atlas(session)
+
+
+def test_rebuild_screenshot_atlas_force_bypasses_active_screenshot_runs(tmp_path, monkeypatch):
+    from memoria.admin import service
+
+    engine = _create_engine(tmp_path, "admin-atlas-rebuild-force.db")
+    blob_dir = tmp_path / "blobs"
+
+    with Session(engine) as session:
+        ingest_screenshot(
+            session,
+            IngestScreenshotCommand(
+                filename="Screenshot_20240411_101500_Atlas.png",
+                media_type="image/png",
+                content=b"active screenshot atlas run",
+                connector_instance_id="manual-upload",
+                external_id="active-screenshot-atlas-run",
+                blob_dir=blob_dir,
+            ),
+        )
+        session.commit()
+
+    received = {}
+
+    def _fake_rebuild(session, *, force=False):
+        received["force"] = force
+        return {
+            "atlas_run_id": 1,
+            "item_count": 0,
+            "region_count": 0,
+            "top_region_keys": [],
+        }
+
+    monkeypatch.setattr(service.atlas_projection, "rebuild_screenshot_atlas", _fake_rebuild)
+
+    with Session(engine) as session:
+        result = service.rebuild_screenshot_atlas(session, force=True)
+
+    assert received["force"] is True
+    assert result["atlas_run_id"] == 1
+
+
 def test_admin_cli_rebuild_screenshot_derived_data_command_accepts_force_flag(
     tmp_path, monkeypatch, capsys
 ):
@@ -101,6 +166,41 @@ def test_admin_cli_rebuild_screenshot_derived_data_command_accepts_force_flag(
     assert received["force"] is True
     stdout = capsys.readouterr().out
     assert '"absorbed": 0' in stdout
+
+
+def test_admin_cli_rebuild_screenshot_atlas_command_accepts_force_flag(
+    tmp_path, monkeypatch, capsys
+):
+    from memoria.admin import cli
+
+    _create_engine(tmp_path, "admin-atlas-rebuild-cli.db")
+
+    received = {}
+
+    def _fake_rebuild(session, *, force=False):
+        received["force"] = force
+        return {
+            "atlas_run_id": 1,
+            "item_count": 5,
+            "region_count": 2,
+            "top_region_keys": ["region-a", "region-b"],
+        }
+
+    monkeypatch.setattr(cli, "rebuild_screenshot_atlas", _fake_rebuild)
+
+    exit_code = cli.main(
+        [
+            "--database-url",
+            f"sqlite:///{tmp_path / 'admin-atlas-rebuild-cli.db'}",
+            "rebuild-screenshot-atlas",
+            "--force",
+        ]
+    )
+
+    assert exit_code == 0
+    assert received["force"] is True
+    stdout = capsys.readouterr().out
+    assert '"atlas_run_id": 1' in stdout
 
 
 def test_diagnose_vision_failure_reports_known_parser_mismatch(tmp_path):
