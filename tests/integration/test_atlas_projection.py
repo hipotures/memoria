@@ -250,16 +250,17 @@ def test_rebuild_screenshot_atlas_keeps_cross_region_bridges_off_self_edges(
         ).all()
 
     assert bridge_item is not None
-    assert bridge_item.region_key == "region-macro-001"
-    assert bridge_item.secondary_region_key == "region-macro-002"
+    assert bridge_item.region_key == "region-cluster-a"
+    assert bridge_item.secondary_region_key == "region-cluster-b"
     assert bridge_item.is_bridge is True
     assert bridge_edges
+    assert all(edge.source_region_key != edge.target_region_key for edge in bridge_edges)
     assert {(edge.source_region_key, edge.target_region_key) for edge in bridge_edges} == {
-        ("region-macro-001", "region-macro-002")
+        ("region-cluster-a", "region-cluster-b")
     }
 
 
-def test_rebuild_screenshot_atlas_groups_atomic_clusters_into_macroregions_by_embedding_signal(
+def test_rebuild_screenshot_atlas_keeps_semantic_map_clusters_as_top_regions(
     tmp_path, monkeypatch
 ):
     from memoria.atlas import projection
@@ -495,36 +496,28 @@ def test_rebuild_screenshot_atlas_groups_atomic_clusters_into_macroregions_by_em
             .order_by(AtlasItem.source_item_id.asc())
         ).all()
 
-    assert len(top_regions) == 2
-    assert len(subregions) == 6
+    assert len(top_regions) == len(cluster_specs)
+    assert subregions == []
 
-    subregion_counts_by_parent: dict[str, int] = {}
-    for subregion in subregions:
-        assert subregion.parent_region_key is not None
-        subregion_counts_by_parent[subregion.parent_region_key] = (
-            subregion_counts_by_parent.get(subregion.parent_region_key, 0) + 1
-        )
-    assert sorted(subregion_counts_by_parent.values()) == [3, 3]
+    expected_region_keys = {
+        f"region-{cluster_key}"
+        for cluster_key, _x, _y, _items in cluster_specs
+    }
+    assert {region.region_key for region in top_regions} == expected_region_keys
 
+    expected_region_key_by_source_item_id = {
+        point.source_item_id: f"region-{cluster_key}"
+        for cluster_key, _x, _y, cluster_items in cluster_specs
+        for point in cluster_items
+    }
     region_key_by_source_item_id = {
         item.source_item_id: item.region_key
         for item in items
     }
-    travel_region_keys = {
-        region_key_by_source_item_id[source_item_id]
-        for source_item_id in seeded.travel_source_item_ids[:6]
-    }
-    finance_region_keys = {
-        region_key_by_source_item_id[source_item_id]
-        for source_item_id in seeded.finance_source_item_ids
-    }
-
-    assert len(travel_region_keys) == 1
-    assert len(finance_region_keys) == 1
-    assert travel_region_keys != finance_region_keys
+    assert region_key_by_source_item_id == expected_region_key_by_source_item_id
 
 
-def test_rebuild_screenshot_atlas_uses_semantic_map_snapshot_metadata_when_embedding_rows_change(
+def test_rebuild_screenshot_atlas_keeps_semantic_map_snapshot_stable_when_embedding_rows_change(
     tmp_path
 ):
     from memoria.atlas import projection
@@ -600,9 +593,9 @@ def test_rebuild_screenshot_atlas_uses_semantic_map_snapshot_metadata_when_embed
     assert atlas_run.embedding_type == "screenshot_semantic_text"
     assert atlas_run.embedding_model == "hashed-text-v1"
     assert atlas_run.embedding_version == "96d-basis"
-    assert atlas_run.source_snapshot_id != first_run.source_snapshot_id
-    assert atlas_run.corpus_hash != first_run.corpus_hash
-    assert second_edges != first_edges
+    assert atlas_run.source_snapshot_id == first_run.source_snapshot_id
+    assert atlas_run.corpus_hash == first_run.corpus_hash
+    assert second_edges == first_edges
 
 
 def test_rebuild_screenshot_atlas_keeps_top_level_semantic_similarity_sparse_on_real_output(
@@ -659,8 +652,8 @@ def test_rebuild_screenshot_atlas_keeps_top_level_semantic_similarity_sparse_on_
         ).all()
 
     assert len(top_regions) >= 2
-    assert len(top_regions) < semantic_cluster_count
-    assert subregions
+    assert len(top_regions) == semantic_cluster_count
+    assert subregions == []
     full_graph_edge_count = len(top_regions) * (len(top_regions) - 1) // 2
     assert 0 < len(semantic_edges) <= full_graph_edge_count
     if len(top_regions) > 2:
@@ -683,7 +676,7 @@ def test_rebuild_screenshot_atlas_populates_generated_subregion_bridge_neighbors
         angle = (math.pi * 2 * angle_index) / 9
         return projection._AtlasPoint(
             source_item_id=source_item_id,
-            cluster_key=f"cluster-ops-{(angle_index // 3) + 1}",
+            cluster_key="cluster-ops",
             x=round(math.cos(angle) * 100, 3),
             y=round(math.sin(angle) * 100, 3),
             vector=[
@@ -715,23 +708,15 @@ def test_rebuild_screenshot_atlas_populates_generated_subregion_bridge_neighbors
         embedding_version="2d-basis",
         regions=[
             projection._SemanticRegionSource(
-                cluster_key=cluster_key,
-                title=cluster_key,
-                x=float(index * 24),
-                y=float(index * 18),
-                top_labels=[cluster_key],
+                cluster_key="cluster-ops",
+                title="cluster-ops",
+                x=0.0,
+                y=0.0,
+                top_labels=["cluster-ops"],
                 top_apps=["slack", "gmail"],
                 time_start=None,
                 time_end=None,
-                items=[
-                    point
-                    for point in region_points
-                    if point.cluster_key == cluster_key
-                ],
-            )
-            for index, cluster_key in enumerate(
-                ["cluster-ops-1", "cluster-ops-2", "cluster-ops-3"],
-                start=1,
+                items=region_points,
             )
         ],
         points_by_id={point.source_item_id: point for point in region_points},
